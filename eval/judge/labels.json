@@ -1,0 +1,205 @@
+[
+  {
+    "requirement_id": "JUDGE-TEST-001",
+    "requirement": {
+      "id": "REQ-001",
+      "title": "User Login Authentication",
+      "description": "User must be able to log in with email and password, redirecting to the dashboard.",
+      "acceptance_criteria": [
+        "User enters valid email and password",
+        "System authenticates user and redirects to dashboard with greeting"
+      ]
+    },
+    "candidate_scenarios": [
+      {
+        "scenario_name": "Successful user login with valid credentials",
+        "file_path": "sample_data/feature_repos/auth.feature",
+        "raw_gherkin": "Scenario: Successful user login with valid credentials\nGiven a registered user exists with email \"alice@example.com\" and password \"SecurePass123!\"\nWhen the user navigates to the login page\nAnd enters email \"alice@example.com\" and password \"SecurePass123!\"\nAnd clicks the \"Login\" button\nThen the user should be redirected to the account dashboard\nAnd a welcome greeting \"Welcome, Alice!\" should be displayed"
+      }
+    ],
+    "gold_status": "COVERED",
+    "gold_match_percentage": 100.0,
+    "expected_gaps": []
+  },
+  {
+    "requirement_id": "JUDGE-TEST-002",
+    "requirement": {
+      "id": "REQ-002",
+      "title": "Password Reset and Account Recovery",
+      "description": "Users should be able to reset their forgotten password via email link and SMS OTP.",
+      "acceptance_criteria": [
+        "User clicks forgot password link",
+        "System sends password reset link to email",
+        "System sends SMS OTP for 2-step verification during recovery"
+      ]
+    },
+    "candidate_scenarios": [
+      {
+        "scenario_name": "Prompt for MFA OTP code on login",
+        "file_path": "sample_data/feature_repos/auth.feature",
+        "raw_gherkin": "Scenario: Prompt for MFA OTP code on login\nGiven a user \"carol@example.com\" has two-factor authentication enabled\nWhen the user enters valid username and password\nThen the system should display the \"Enter 6-digit OTP\" screen"
+      }
+    ],
+    "gold_status": "PARTIALLY_COVERED",
+    "gold_match_percentage": 40.0,
+    "expected_gaps": ["Password reset link via email", "Account recovery flow"]
+  },
+  {
+    "requirement_id": "JUDGE-TEST-003",
+    "requirement": {
+      "id": "REQ-003",
+      "title": "Crypto & Bitcoin Payment Gateway",
+      "description": "Users should be able to pay for orders using Bitcoin and Ethereum web3 wallets.",
+      "acceptance_criteria": [
+        "Connect Metamask wallet",
+        "Sign transaction on Ethereum mainnet",
+        "Verify on-chain confirmation"
+      ]
+    },
+    "candidate_scenarios": [
+      {
+        "scenario_name": "Complete checkout with valid Credit Card",
+        "file_path": "sample_data/feature_repos/checkout.feature",
+        "raw_gherkin": "Scenario: Complete checkout with valid Credit Card\nGiven the user has 2 items in their shopping cart\nWhen the user enters shipping address\nAnd provides valid credit card details\nThen the payment should be processed successfully"
+      }
+    ],
+    "gold_status": "NOT_COVERED",
+    "gold_match_percentage": 0.0,
+    "expected_gaps": ["Crypto wallet integration", "Bitcoin and Ethereum payment"]
+  },
+  {
+    "requirement_id": "JUDGE-TEST-004",
+    "requirement": {
+      "id": "REQ-004",
+      "title": "Promotional Discount Coupon Validation",
+      "description": "Cart applies promotional percentage discounts upon entering valid coupon codes.",
+      "acceptance_criteria": [
+        "User applies valid promo code SUMMER20",
+        "System validates expiration date and deducts 20%",
+        "Cart displays discount line item"
+      ]
+    },
+    "candidate_scenarios": [
+      {
+        "scenario_name": "Apply valid promotional discount coupon",
+        "file_path": "sample_data/feature_repos/checkout.feature",
+        "raw_gherkin": "Scenario: Apply valid promotional discount coupon\nGiven the user cart subtotal is \"$100.00\"\nWhen the user enters promo code \"SUMMER20\"\nAnd clicks \"Apply Coupon\"\nThen the system validates the coupon expiration date\nAnd applies a 20% discount reducing subtotal to \"$80.00\"\nAnd displays discount line item \"-$20.00\""
+      }
+    ],
+    "gold_status": "COVERED",
+    "gold_match_percentage": 100.0,
+    "expected_gaps": []
+  },
+  {
+    "requirement_id": "JUDGE-ALERT-FULL-001",
+    "requirement": {
+      "id": "REQ-ALERT-101",
+      "title": "Manual Alert Inactivation & Audit Persistence",
+      "description": "Outreach managers must be able to retire an active alert and verify that the inactivated record is logged with user attribution in the History Drawer.",
+      "acceptance_criteria": [
+        "Select active alert in Manage Member Alerts panel",
+        "Set alert status to inactive with a retirement reason",
+        "Verify inactive alert is logged in History Drawer with username and timestamp"
+      ]
+    },
+    "candidate_scenarios": [
+      {
+        "scenario_name": "Inactivate alert and verify detailed audit entries",
+        "file_path": "cypress/features/QOM0036_AlertAuditHistory.feature",
+        "raw_gherkin": "Scenario Outline: Inactivate alert and verify detailed audit entries\nWhen User opens \"Manage Member Alerts\" panel\nAnd User sets status to inactive for category \"<Category>\" with reason \"<Reason>\"\nAnd User clicks on \"Save\" button\nAnd User opens \"History Drawer\"\nThen Verify historical row for \"<Category>\" contains updated by \"priority_roster_tester\" and status \"Inactive\""
+      }
+    ],
+    "gold_status": "COVERED",
+    "gold_match_percentage": 100.0,
+    "expected_gaps": []
+  },
+  {
+    "requirement_id": "JUDGE-ALERT-PARTIAL-002",
+    "requirement": {
+      "id": "REQ-ALERT-102",
+      "title": "Alert Boundary Validation & Visual Tagging",
+      "description": "Validate mandatory form fields during alert creation and ensure active alerts render an orange badge on the left profile panel.",
+      "acceptance_criteria": [
+        "Enforce mandatory start date validation on alert submission",
+        "Prevent submission when end date precedes start date",
+        "Render active alerts with an orange background on the Member 360 left panel"
+      ]
+    },
+    "candidate_scenarios": [
+      {
+        "scenario_name": "Attempt to save manual alert without mandatory start date",
+        "file_path": "cypress/features/QOM0034_AlertDateValidation.feature",
+        "raw_gherkin": "Scenario: Attempt to save manual alert without mandatory start date\nWhen User selects alert category \"Out of Country\"\nAnd User leaves \"Start Date\" field blank\nAnd User enters notes \"Member traveling abroad\"\nAnd User clicks on \"Save\" button\nThen User verifies inline validation error \"Start Date is required\"\nAnd Verify alert is not added to the Left Panel"
+      },
+      {
+        "scenario_name": "Enter end date preceding start date",
+        "file_path": "cypress/features/QOM0034_AlertDateValidation.feature",
+        "raw_gherkin": "Scenario: Enter end date preceding start date\nWhen User selects alert category \"Hospitalized\"\nAnd User enters start date \"08/15/2026\"\nAnd User enters end date \"08/10/2026\"\nAnd User clicks on \"Save\" button\nThen User verifies validation message \"End Date cannot be prior to Start Date\""
+      }
+    ],
+    "gold_status": "PARTIALLY_COVERED",
+    "gold_match_percentage": 66.7,
+    "expected_gaps": [
+      "Render active alerts with an orange background on the Member 360 left panel"
+    ]
+  },
+  {
+    "requirement_id": "JUDGE-UNION-003",
+    "requirement": {
+      "id": "REQ-ALERT-103",
+      "title": "SDOH Barrier Association and Multi-Alert Left Panel Presentation",
+      "description": "Support simultaneous display of clinical outreach alerts and SDOH barriers on the left panel with distinct badge colors.",
+      "acceptance_criteria": [
+        "Display multiple active alerts sequentially with orange badges",
+        "Display logged SDOH barriers with blue badges alongside active alerts"
+      ]
+    },
+    "candidate_scenarios": [
+      {
+        "scenario_name": "Display multiple active alerts with orange highlights",
+        "file_path": "cypress/features/QOM0035_MultiAlertsDisplay.feature",
+        "raw_gherkin": "Scenario: Display multiple active alerts with orange highlights\nGiven Member has active alert \"Hospitalized\" with start date \"08/01/2026\"\nAnd Member has active alert \"Member request - Hold Outreach\" with start date \"08/10/2026\"\nWhen User views the Member 360 Left Panel\nThen Both alerts should display sequentially with \"orange\" background badges"
+      },
+      {
+        "scenario_name": "Log transportation barrier and place outreach on hold",
+        "file_path": "cypress/features/SDOH/QOM0039_SDOH_BarrierOutreachHold.feature",
+        "raw_gherkin": "Scenario: Log transportation barrier and place outreach on hold\nWhen User navigates to \"SDOH\" section in Member 360\nAnd User logs a new barrier with category \"Transportation\" and severity \"High\"\nWhen User opens \"Manage Member Alerts\" right panel\nAnd User adds manual alert \"Member request - Hold Outreach\"\nThen Verify Left Panel displays Alert with Orange badge and SDOH Tag with Blue badge"
+      }
+    ],
+    "gold_status": "COVERED",
+    "gold_match_percentage": 100.0,
+    "expected_gaps": []
+  },
+  {
+    "requirement_id": "JUDGE-ALERT-NONE-004",
+    "requirement": {
+      "id": "REQ-ALERT-104",
+      "title": "Automated Member SMS Dispatch on Alert Trigger",
+      "description": "Automatically send an SMS notification directly to the member phone number whenever a Hospitalized alert is assigned.",
+      "acceptance_criteria": [
+        "Trigger automated SMS payload to member phone number on alert save",
+        "Log SMS delivery receipt ID in communication drawer",
+        "Allow member to opt out via reply STOP"
+      ]
+    },
+    "candidate_scenarios": [
+      {
+        "scenario_name": "Generate automated fax draft when member is flagged as Hospitalized",
+        "file_path": "cypress/features/Outbound_Fax/QOM0037_OutboundFax_AlertTrigger.feature",
+        "raw_gherkin": "Scenario: Generate automated fax draft when member is flagged as Hospitalized\nWhen User selects alert category \"Hospitalized\"\nAnd User clicks on \"Save\" button in right panel\nWhen User navigates to \"Outbound_Fax\" drawer\nThen User verifies a new fax draft is created\nWhen User clicks \"Send Fax\"\nThen Verify transmission status updates to \"Sent\""
+      },
+      {
+        "scenario_name": "Validate persistent alert indicators while editing member demographic details",
+        "file_path": "cypress/features/QOM0026_DemographicsRightPanel.feature",
+        "raw_gherkin": "Scenario: Validate persistent alert indicators while editing member demographic details\nWhen User updates phone number to \"760-005-8907\" and clicks \"Save\"\nThen Verify update success notification is displayed"
+      }
+    ],
+    "gold_status": "NOT_COVERED",
+    "gold_match_percentage": 0.0,
+    "expected_gaps": [
+      "Trigger automated SMS payload to member phone number on alert save",
+      "Log SMS delivery receipt ID in communication drawer",
+      "Allow member to opt out via reply STOP"
+    ]
+  }
+]

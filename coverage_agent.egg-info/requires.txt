@@ -1,0 +1,14 @@
+sentence-transformers
+torch
+rank-bm25
+pymilvus
+watchdog
+pydantic
+pyyaml
+pypdf
+python-docx
+xxhash
+rich
+fastapi
+uvicorn
+python-multipart

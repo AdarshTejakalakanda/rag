@@ -1,0 +1,130 @@
+[
+  {
+    "requirement_id": "REQ-AUTH-001",
+    "query": "User authentication with email and password, successful login redirection to account dashboard with welcome greeting.",
+    "gold_scenario_names": [
+      "Successful user login with valid credentials"
+    ],
+    "gold_files": [
+      "auth.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-AUTH-002",
+    "query": "Handling failed login attempts with invalid password and displaying invalid credentials error message.",
+    "gold_scenario_names": [
+      "Failed login with invalid password"
+    ],
+    "gold_files": [
+      "auth.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-AUTH-003",
+    "query": "Security rate limiting and account lockout for 15 minutes after 5 consecutive failed login attempts with alert email.",
+    "gold_scenario_names": [
+      "Account lockout after 5 consecutive failed attempts"
+    ],
+    "gold_files": [
+      "auth.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-AUTH-004",
+    "query": "Two-factor multi-factor authentication (MFA) requiring 6-digit OTP SMS verification code on login.",
+    "gold_scenario_names": [
+      "Prompt for MFA OTP code on login"
+    ],
+    "gold_files": [
+      "auth.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-CHECKOUT-001",
+    "query": "Complete shopping cart checkout payment with valid credit card, address entry, and order confirmation email.",
+    "gold_scenario_names": [
+      "Complete checkout with valid Credit Card"
+    ],
+    "gold_files": [
+      "checkout.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-CHECKOUT-002",
+    "query": "Promotional discount coupon code application validating expiration date and applying discount line item.",
+    "gold_scenario_names": [
+      "Apply valid promotional discount coupon"
+    ],
+    "gold_files": [
+      "checkout.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-INVENTORY-001",
+    "query": "Prevent purchasing out-of-stock items and display unavailable inventory warning.",
+    "gold_scenario_names": [
+      "Prevent adding out-of-stock items to cart"
+    ],
+    "gold_files": [
+      "inventory.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RETURNS-001",
+    "query": "Initiate item return request within 30-day return policy window with prepaid shipping label.",
+    "gold_scenario_names": [
+      "Eligible item return within 30 days"
+    ],
+    "gold_files": [
+      "returns.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RETRIEVAL-001",
+    "query": "Ensure quality managers can place an outreach hold on temporary overseas travelers and verify the orange indicator appears on the summary dashboard.",
+    "gold_scenario_names": [
+      "Add new manual member alert and verify orange badge on Left Panel"
+    ],
+    "gold_files": [
+      "QOM0031_ManualMemberAlerts_Create.feature",
+      "gemini_test.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RETRIEVAL-002",
+    "query": "@QOM0033 QOM0033 user system tab category grid Hospice Hospitalized Deceased",
+    "gold_scenario_names": [
+      "Verify color-coded grid and category segregation"
+    ],
+    "gold_files": [
+      "QOM0033_SystemVsUserAlertsToggle.feature",
+      "gemini-code-1787333859206.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RETRIEVAL-003",
+    "query": "When a member is flagged as hospitalized, automatically draft an outbound status change notice and transmit it directly to Dr. Annik White.",
+    "gold_scenario_names": [
+      "Generate automated fax draft when member is flagged as Hospitalized"
+    ],
+    "gold_files": [
+      "QOM0037_OutboundFax_AlertTrigger.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RETRIEVAL-004",
+    "query": "Prevent uncommitted alert form data leakage and discard drafts when an active editor session times out after 15 minutes of inactivity.",
+    "gold_scenario_names": [
+      "Invalidate uncommitted alert changes on session expiration"
+    ],
+    "gold_files": [
+      "QOM0040_SessionTimeout_AlertDrawer.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RETRIEVAL-005",
+    "query": "Allow outreach coordinators to process recurring credit card subscription payments directly inside the member alert modal.",
+    "gold_scenario_names": [],
+    "gold_files": []
+  }
+]

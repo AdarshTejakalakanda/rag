@@ -1,0 +1,20 @@
+Metadata-Version: 2.4
+Name: coverage-agent
+Version: 1.0.0
+Summary: Local Agentic RAG Test Coverage Analyzer
+Requires-Dist: sentence-transformers
+Requires-Dist: torch
+Requires-Dist: rank-bm25
+Requires-Dist: pymilvus
+Requires-Dist: watchdog
+Requires-Dist: pydantic
+Requires-Dist: pyyaml
+Requires-Dist: pypdf
+Requires-Dist: python-docx
+Requires-Dist: xxhash
+Requires-Dist: rich
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: python-multipart
+Dynamic: requires-dist
+Dynamic: summary
