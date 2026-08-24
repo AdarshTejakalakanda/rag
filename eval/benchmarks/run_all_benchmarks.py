@@ -70,12 +70,12 @@ class BenchmarkRunner:
         # 1. Retrieval Benchmark
         if target in ("retrieval", "all", "e2e"):
             # Ensure features are indexed for retrieval
-            sc_count = len(self.pipeline.state_db.get_all_scenarios(repo_id=repo_id))
-            if sc_count == 0:
-                features_dir = Path("sample_data/feature_repos")
-                if features_dir.exists():
-                    print(f"📦 Indexing sample feature repository for retrieval evaluation...")
-                    self.pipeline.index_features(feature_dir=features_dir, repo_id=repo_id)
+            eval_features_dir = Path("eval/generated_features")
+            sample_features_dir = Path("sample_data/feature_repos")
+            features_dir = eval_features_dir if eval_features_dir.exists() else sample_features_dir
+            if features_dir.exists():
+                print(f"📦 Indexing feature repository ({features_dir}) for retrieval evaluation...")
+                self.pipeline.index_features(feature_dir=features_dir, repo_id=repo_id)
 
             print("🔍 Running Retrieval Evaluation (Recall@5, Recall@10, MRR, NDCG)...")
             r_eval = RetrievalEvaluator(retriever=self.pipeline.retriever)

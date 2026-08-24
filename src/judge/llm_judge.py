@@ -43,17 +43,52 @@ def canonical_requirement_criteria(requirement: RequirementChunk) -> List[str]:
 
 
 def map_to_canonical(stated: str, canonical: List[str]) -> Optional[str]:
-    """Map LLM-stated criterion text back onto a canonical requirement criterion."""
+    """
+    Map LLM-stated criterion text back onto a canonical requirement criterion with
+    strict token-overlap verification to eliminate loose false-positive mappings.
+    """
     needle = normalize_criterion(stated)
     if not needle:
         return None
+
+    needle_words = set(re.findall(r"\w+", needle.lower()))
+    if not needle_words:
+        return None
+
+    best_match = None
+    best_score = 0.0
+
     for item in canonical:
         hay = normalize_criterion(item)
         if not hay:
             continue
-        if needle == hay or needle in hay or hay in needle:
+        hay_words = set(re.findall(r"\w+", hay.lower()))
+        if not hay_words:
+            continue
+
+        # Exact match
+        if needle == hay:
             return item
-    return None
+
+        # Substantial substring (at least 3 words and covers >= 50% length of the target criterion)
+        if len(needle_words) >= 3 and (needle in hay or hay in needle):
+            if len(needle) >= 0.5 * len(hay) or len(hay) >= 0.5 * len(needle):
+                return item
+
+        # Token overlap & Jaccard similarity
+        intersection = needle_words.intersection(hay_words)
+        if not intersection:
+            continue
+        overlap = len(intersection) / min(len(needle_words), len(hay_words))
+        jaccard = len(intersection) / len(needle_words.union(hay_words))
+
+        # Composite score
+        score = max(overlap * 0.6 + jaccard * 0.4, jaccard)
+        if score > best_score and score >= 0.65:
+            best_score = score
+            best_match = item
+
+    return best_match
 
 
 def classify_from_percentage(match_percentage: int) -> str:

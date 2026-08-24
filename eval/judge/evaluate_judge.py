@@ -18,9 +18,15 @@ class JudgeEvaluator:
 
     CLASSES = ["COVERED", "PARTIALLY_COVERED", "NOT_COVERED"]
 
-    def __init__(self, judge: LLMJudge, gold_labels_path: Optional[str or Path] = None):
+    def __init__(
+        self,
+        judge: LLMJudge,
+        gold_labels_path: Optional[str or Path] = None,
+        gold_dataset_path: Optional[str or Path] = None,
+    ):
         self.judge = judge
-        self.gold_path = Path(gold_labels_path or Path(__file__).parent / "labels.json")
+        target_path = gold_dataset_path or gold_labels_path
+        self.gold_path = Path(target_path or Path(__file__).parent / "labels.json")
 
     def load_gold_labels(self) -> List[Dict[str, Any]]:
         with open(self.gold_path, "r", encoding="utf-8") as f:
@@ -52,9 +58,11 @@ class JudgeEvaluator:
         case_details = []
         correct_count = 0
         mae_errors = []
-
-        for case in gold_cases:
-            case_id = case.get("requirement_id", "JUDGE-TEST")
+        total_cases = len(gold_cases)
+        for idx, case in enumerate(gold_cases, start=1):
+            case_id = case.get("case_id") or case.get("requirement_id", "JUDGE-TEST")
+            if idx % 5 == 0 or idx == 1 or idx == total_cases:
+                print(f"   [Judge {idx}/{total_cases}] Evaluating case: {case_id}...", flush=True)
             r_dict = case["requirement"]
             req = RequirementChunk(
                 req_id=r_dict.get("id", "REQ-1"),
@@ -63,7 +71,7 @@ class JudgeEvaluator:
                 description=r_dict.get("description", ""),
                 acceptance_criteria=r_dict.get("acceptance_criteria", []),
                 business_rules=r_dict.get("business_rules", []),
-                source_file="eval_doc.md",
+                source_file=r_dict.get("brd_path") or r_dict.get("source_file") or "eval_doc.md",
                 line_number=1,
                 full_text=f"{r_dict.get('title', '')}\n{r_dict.get('description', '')}",
             )

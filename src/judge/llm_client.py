@@ -6,6 +6,7 @@ Reads API keys and configuration directly from environment variables (.env).
 import os
 import json
 import re
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 import urllib.request
@@ -30,6 +31,8 @@ SUPPORTED_GEMINI_MODELS = [
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
 ]
+
+INVALID_GEMINI_MODELS = set()
 
 
 class LLMClient:
@@ -111,12 +114,14 @@ class LLMClient:
             return self._call_mock(system_prompt, user_prompt)
 
         primary_model = os.getenv("GEMINI_MODEL") or self.config.gemini.model
-        models_to_try = [primary_model] + [m for m in SUPPORTED_GEMINI_MODELS if m != primary_model]
+        models_to_try = [primary_model] + [m for m in SUPPORTED_GEMINI_MODELS if m != primary_model and m not in INVALID_GEMINI_MODELS]
 
         try:
             from google import genai
             client = genai.Client(api_key=api_key)
             for m in models_to_try:
+                if m in INVALID_GEMINI_MODELS:
+                    continue
                 try:
                     response = client.models.generate_content(
                         model=m,
@@ -126,7 +131,11 @@ class LLMClient:
                         return self._clean_and_parse_json(response.text)
                 except Exception as model_err:
                     err_str = str(model_err)
-                    if "429" in err_str or "503" in err_str or "404" in err_str:
+                    if "404" in err_str:
+                        INVALID_GEMINI_MODELS.add(m)
+                        continue
+                    if "429" in err_str or "503" in err_str:
+                        time.sleep(1.0)
                         continue
                     break
         except Exception as e:

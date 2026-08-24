@@ -28,7 +28,10 @@ class RetrievalEvaluator:
         norm_file = Path(file_path).name.strip().lower()
         
         name_match = any(g.strip().lower() in norm_name or norm_name in g.strip().lower() for g in gold_names)
-        file_match = not gold_files or any(gf.strip().lower() in norm_file for gf in gold_files)
+        file_match = not gold_files or any(
+            Path(gf).name.strip().lower() == norm_file or gf.strip().lower() in file_path.lower().replace("\\", "/")
+            for gf in gold_files
+        )
         return name_match and file_match
 
     def evaluate(self, repo_id: str = "default", top_k: int = 10) -> Dict[str, Any]:
@@ -49,9 +52,12 @@ class RetrievalEvaluator:
         ndcgs_10 = []
         query_details = []
 
-        for item in gold_data:
+        total_q = len(gold_data)
+        for idx, item in enumerate(gold_data, start=1):
             q_id = item.get("requirement_id", "REQ")
             query = item["query"]
+            if idx % 10 == 0 or idx == 1 or idx == total_q:
+                print(f"   [Retrieval {idx}/{total_q}] Evaluating: {query[:45]}...", flush=True)
             gold_names = item.get("gold_scenario_names", [])
             gold_files = item.get("gold_files", [])
 

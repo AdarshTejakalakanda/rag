@@ -1,129 +1,648 @@
 [
   {
-    "requirement_id": "REQ-AUTH-001",
-    "query": "User authentication with email and password, successful login redirection to account dashboard with welcome greeting.",
+    "requirement_id": "REQ-CAD-101",
+    "query": "How do care schedulers establish multi-week repeating visit schedules for patients?",
     "gold_scenario_names": [
-      "Successful user login with valid credentials"
+      "Scheduler configures weekly recurring appointment cadence",
+      "Scheduler configures bi-weekly recurring appointment cadence without notifications"
     ],
     "gold_files": [
-      "auth.feature"
+      "eval/generated_features/eval/generated_features/features/cadence/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/cadence/partial_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-AUTH-002",
-    "query": "Handling failed login attempts with invalid password and displaying invalid credentials error message.",
+    "requirement_id": "REQ-CAD-101",
+    "query": "REQ-CAD-101 maximum occurrence limit 52 cadence modifications audit log",
     "gold_scenario_names": [
-      "Failed login with invalid password"
+      "Scheduler attempts to create sequence exceeding maximum occurrence limit",
+      "Scheduler updates recurring cadence for future uncompleted visits"
     ],
     "gold_files": [
-      "auth.feature"
+      "eval/generated_features/eval/generated_features/features/cadence/full_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-AUTH-003",
-    "query": "Security rate limiting and account lockout for 15 minutes after 5 consecutive failed login attempts with alert email.",
+    "requirement_id": "REQ-CAD-101",
+    "query": "recurring appointment sequence cadence modifications AND automated conflict resolution",
     "gold_scenario_names": [
-      "Account lockout after 5 consecutive failed attempts"
+      "Scheduler generates sequence with overlapping provider slot conflicts",
+      "Scheduler updates recurring cadence for future uncompleted visits"
     ],
     "gold_files": [
-      "auth.feature"
+      "eval/generated_features/eval/generated_features/features/cadence/full_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-AUTH-004",
-    "query": "Two-factor multi-factor authentication (MFA) requiring 6-digit OTP SMS verification code on login.",
+    "requirement_id": "REQ-CAD-101",
+    "query": "patient self-service portal single appointment cancellation workflow",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-OOO-101",
+    "query": "How does the system handle patient rescheduling when a healthcare provider takes time off?",
     "gold_scenario_names": [
-      "Prompt for MFA OTP code on login"
+      "Provider sets multi-day out-of-office blockout",
+      "Provider sets single-day blockout without re-assignment notifications"
     ],
     "gold_files": [
-      "auth.feature"
+      "eval/generated_features/eval/generated_features/features/ooo/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/ooo/partial_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-CHECKOUT-001",
-    "query": "Complete shopping cart checkout payment with valid credit card, address entry, and order confirmation email.",
+    "requirement_id": "REQ-OOO-101",
+    "query": "REQ-OOO-101 blockout pending queue on-call provider re-assignment audit log",
     "gold_scenario_names": [
-      "Complete checkout with valid Credit Card"
+      "Provider sets multi-day out-of-office blockout",
+      "System routes impacted appointments to unassigned pending queue when no on-call provider is available"
     ],
     "gold_files": [
-      "checkout.feature"
+      "eval/generated_features/eval/generated_features/features/ooo/full_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-CHECKOUT-002",
-    "query": "Promotional discount coupon code application validating expiration date and applying discount line item.",
+    "requirement_id": "REQ-OOO-101",
+    "query": "out-of-office blockouts AND automated patient re-assignment to on-call provider AND SMS notification within 15 minutes",
     "gold_scenario_names": [
-      "Apply valid promotional discount coupon"
+      "Provider sets multi-day out-of-office blockout"
     ],
     "gold_files": [
-      "checkout.feature"
+      "eval/generated_features/eval/generated_features/features/ooo/full_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-INVENTORY-001",
-    "query": "Prevent purchasing out-of-stock items and display unavailable inventory warning.",
+    "requirement_id": "REQ-OOO-101",
+    "query": "emergency intake direct patient transfer push notification shift roster swap",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-CAL-101",
+    "query": "How does the system perform external calendar sync across multiple doctors using calendar standards?",
     "gold_scenario_names": [
-      "Prevent adding out-of-stock items to cart"
+      "Sync provider schedule with external CalDAV server",
+      "Manual trigger sync for multi-provider CalDAV integration",
+      "Automated 15 minute CalDAV synchronization"
     ],
     "gold_files": [
-      "inventory.feature"
+      "eval/generated_features/features/calendar/full_coverage.feature",
+      "eval/generated_features/features/calendar/partial_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-RETURNS-001",
-    "query": "Initiate item return request within 30-day return policy window with prepaid shipping label.",
+    "requirement_id": "REQ-CAL-101",
+    "query": "REQ-CAL-101 CalDAV AES-256 15-minute sync activity audit trail",
     "gold_scenario_names": [
-      "Eligible item return within 30 days"
+      "Sync provider schedule with external CalDAV server",
+      "Secure credential storage for CalDAV integration",
+      "Manual trigger sync for multi-provider CalDAV integration"
     ],
     "gold_files": [
-      "returns.feature"
+      "eval/generated_features/features/calendar/full_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-RETRIEVAL-001",
-    "query": "Ensure quality managers can place an outreach hold on temporary overseas travelers and verify the orange indicator appears on the summary dashboard.",
+    "requirement_id": "REQ-CAL-101",
+    "query": "CalDAV schedule sync that encrypts credentials with AES-256 AND notifies clinic administrator on network timeout failure",
     "gold_scenario_names": [
-      "Add new manual member alert and verify orange badge on Left Panel"
+      "Sync provider schedule with external CalDAV server",
+      "Secure credential storage for CalDAV integration",
+      "Handle network timeout failure during CalDAV synchronization"
     ],
     "gold_files": [
-      "QOM0031_ManualMemberAlerts_Create.feature",
-      "gemini_test.feature"
+      "eval/generated_features/features/calendar/full_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-RETRIEVAL-002",
-    "query": "@QOM0033 QOM0033 user system tab category grid Hospice Hospitalized Deceased",
+    "requirement_id": "REQ-CAL-101",
+    "query": "Exporting read-only static iCal web links for personal Google Calendar integration",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-LOCK-101",
+    "query": "How does the system prevent two patients from booking the same calendar slot simultaneously?",
     "gold_scenario_names": [
-      "Verify color-coded grid and category segregation"
+      "Patient initiates appointment booking and acquires temporary slot lock",
+      "Concurrent users attempt simultaneous slot selection",
+      "Patient acquires temporary slot lock on selection"
     ],
     "gold_files": [
-      "QOM0033_SystemVsUserAlertsToggle.feature",
-      "gemini-code-1787333859206.feature"
+      "eval/generated_features/features/slot_locking/full_coverage.feature",
+      "eval/generated_features/features/slot_locking/partial_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-RETRIEVAL-003",
-    "query": "When a member is flagged as hospitalized, automatically draft an outbound status change notice and transmit it directly to Dr. Annik White.",
+    "requirement_id": "REQ-LOCK-101",
+    "query": "REQ-LOCK-101 temporary 10-minute reservation lock WebSocket Held status double-booking",
     "gold_scenario_names": [
-      "Generate automated fax draft when member is flagged as Hospitalized"
+      "Patient initiates appointment booking and acquires temporary slot lock",
+      "Concurrent users attempt simultaneous slot selection"
     ],
     "gold_files": [
-      "QOM0037_OutboundFax_AlertTrigger.feature"
+      "eval/generated_features/features/slot_locking/full_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-RETRIEVAL-004",
-    "query": "Prevent uncommitted alert form data leakage and discard drafts when an active editor session times out after 15 minutes of inactivity.",
+    "requirement_id": "REQ-LOCK-101",
+    "query": "10-minute temporary reservation lock on slot selection AND real-time Held status broadcast via WebSockets AND lock conversion to permanent booked state",
     "gold_scenario_names": [
-      "Invalidate uncommitted alert changes on session expiration"
+      "Patient initiates appointment booking and acquires temporary slot lock",
+      "Patient completes booking conversion from temporary lock to confirmed state"
     ],
     "gold_files": [
-      "QOM0040_SessionTimeout_AlertDrawer.feature"
+      "eval/generated_features/features/slot_locking/full_coverage.feature"
     ]
   },
   {
-    "requirement_id": "REQ-RETRIEVAL-005",
-    "query": "Allow outreach coordinators to process recurring credit card subscription payments directly inside the member alert modal.",
+    "requirement_id": "REQ-LOCK-101",
+    "query": "Cancelling booked appointments and issuing automatic portal refund notifications",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-TELE-101",
+    "query": "How does the platform handle automated virtual examination room setup and patient link dispatch prior to video visits?",
+    "gold_scenario_names": [
+      "System provisions room and generates secure tokens",
+      "System dispatches 24 hour pre-appointment notifications"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/telehealth/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-TELE-101",
+    "query": "REQ-TELE-101 WebRTC room expiration 60 minutes post appointment APT-9901",
+    "gold_scenario_names": [
+      "Virtual room links expire post appointment window"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/telehealth/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-TELE-101",
+    "query": "automated virtual room creation AND secure link generation AND audit logging of room events",
+    "gold_scenario_names": [
+      "System provisions room and generates secure tokens",
+      "System logs room creation and token generation events to audit log"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/telehealth/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-TELE-101",
+    "query": "adjusting WebRTC video bitrate during packet loss in virtual examination rooms",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-SCHED-101",
+    "query": "How can patients change their appointment time on the web portal and what are the dynamic timeframe restrictions by department?",
+    "gold_scenario_names": [
+      "Patient self-reschedules outside restricted window",
+      "Patient reschedules standard appointment outside window"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/scheduling/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/scheduling/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-SCHED-101",
+    "query": "REQ-SCHED-101 penalty fee acknowledgement late cancellation warning 48 hours Specialty Care",
+    "gold_scenario_names": [
+      "Patient attempts self-reschedule within dynamic restricted window"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/scheduling/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-SCHED-101",
+    "query": "maximum limit 3 self-reschedules AND release slot to booking pool",
+    "gold_scenario_names": [
+      "Patient self-reschedules outside restricted window",
+      "Patient reaches maximum self-reschedule limit"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/scheduling/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-SCHED-101",
+    "query": "configuring provider holiday schedules and block dates for clinic working hours",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-ALERT-101",
+    "query": "How do clinical staff turn off member alerts and maintain traceability in Reach?",
+    "gold_scenario_names": [
+      "Care coordinator manually inactivates a single member alert",
+      "Care coordinator inactivates alert without persistent audit verification"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/alert/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/alert/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-ALERT-101",
+    "query": "REQ-ALERT-101 bulk inactivation CSV upload up to 250 member alerts @REQ-ALERT-101",
+    "gold_scenario_names": [
+      "Care coordinator performs bulk alert inactivation via CSV upload"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/alert/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-ALERT-101",
+    "query": "Inactivating member alert AND suspending pending automated SMS notifications AND supervisor approval for reactivation",
+    "gold_scenario_names": [
+      "Care coordinator manually inactivates a single member alert",
+      "Supervisor approves reactivation of an inactivated member alert",
+      "Inactivating an alert suspends pending automated SMS notifications"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/alert/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-ALERT-101",
+    "query": "filtering care gap alerts by severity level and exporting to PDF report",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-HBA1C-101",
+    "query": "How does the system pause outreach when a patient submits a qualifying blood sugar lab result?",
+    "gold_scenario_names": [
+      "Ingest LOINC HbA1c lab result and close diabetes care gap",
+      "Process low HbA1c result to close care gap without CRM sync"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/hba1c/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/hba1c/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-HBA1C-101",
+    "query": "REQ-HBA1C-101 LOINC HbA1c lab result outreach hold CRM synchronization",
+    "gold_scenario_names": [
+      "Synchronize outreach hold status to external CRM"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/hba1c/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-HBA1C-101",
+    "query": "Ingest LOINC HbA1c lab result AND route result exceeding 9.0% to clinical escalation queue",
+    "gold_scenario_names": [
+      "Ingest LOINC HbA1c lab result and close diabetes care gap",
+      "Route high HbA1c lab result to clinical escalation queue"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/hba1c/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-HBA1C-101",
+    "query": "scheduling annual diabetes eye exam appointments via CRM integration",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-AUTH-101",
+    "query": "How does the system handle prior authorization submissions and payer status responses automatically?",
+    "gold_scenario_names": [
+      "Submit automated prior authorization via 278 EDI transaction",
+      "Process incoming payer approval and update referral record",
+      "Submit automated prior authorization without status latency check",
+      "Process payer authorization approval without sending SMS notification"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/auth/full_coverage.feature",
+      "eval/generated_features/features/auth/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-AUTH-101",
+    "query": "REQ-AUTH-101 EDI 278 Payer Pending 60 seconds SMS prior auth coordinator task queue",
+    "gold_scenario_names": [
+      "Submit automated prior authorization via 278 EDI transaction",
+      "Process incoming payer approval and update referral record",
+      "Route rejected prior authorization request to task queue"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/auth/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-AUTH-101",
+    "query": "Routing rejected EDI 278 authorization requests to coordinator queue within 5 minutes AND sending SMS patient notifications",
+    "gold_scenario_names": [
+      "Route rejected prior authorization request to task queue"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/auth/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-AUTH-101",
+    "query": "Scheduling peer to peer consultations for manual fax authorization appeals",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-GAP-101",
+    "query": "How are care managers notified of open clinical gaps and how are call records managed?",
+    "gold_scenario_names": [
+      "Identify open care gaps and assign telephonic outreach task",
+      "Log telephonic outreach attempt details",
+      "Identify open care gaps without calendar reminder integration",
+      "Record telephonic outreach call outcome without gap status update"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/gap/full_coverage.feature",
+      "eval/generated_features/features/gap/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-GAP-101",
+    "query": "REQ-GAP-101 Closed-Pending-Verification 3 consecutive attempts community care worker 24 hours calendar",
+    "gold_scenario_names": [
+      "Log telephonic outreach attempt details",
+      "Reassign task after 3 failed outreach attempts",
+      "Schedule follow-up outreach call and generate calendar reminder"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/gap/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-GAP-101",
+    "query": "Reassigning outreach task to community care worker after 3 unsuccessful attempts AND generating calendar reminders 24 hours prior",
+    "gold_scenario_names": [
+      "Reassign task after 3 failed outreach attempts",
+      "Schedule follow-up outreach call and generate calendar reminder"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/gap/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-GAP-101",
+    "query": "Inbound HL7 lab data import for automated gap satisfaction without calling",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-FAX-101",
+    "query": "How does the system send clinical faxes to a patient's assigned primary care doctor?",
+    "gold_scenario_names": [
+      "Automatic fax dispatch to primary provider with audit logging and HIPAA cover sheet",
+      "Standard outbound fax delivery to primary provider without audit record"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/fax/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/fax/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-FAX-101",
+    "query": "outbound fax REQ-FAX-101 3 retries 5 minutes central unassigned fax review queue",
+    "gold_scenario_names": [
+      "Fax delivery retry logic and fallback to central review queue"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/fax/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-FAX-101",
+    "query": "transmission audit record page count AND HIPAA cover sheet redacted member SSN and NPI",
+    "gold_scenario_names": [
+      "Automatic fax dispatch to primary provider with audit logging and HIPAA cover sheet"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/fax/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-FAX-101",
+    "query": "attaching incoming fax documents from OCR parsing directly to member chart",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-HIPAA-101",
+    "query": "What happens when a user repeatedly fails patient verification when opening medical records?",
+    "gold_scenario_names": [
+      "Session lockout and security alert triggered after three consecutive verification failures",
+      "Session locked without countdown timer upon verification failure"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/hipaa/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/hipaa/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-HIPAA-101",
+    "query": "REQ-HIPAA-101 3 member identifiers DOB MRN Zip Code countdown timer 15 minutes",
+    "gold_scenario_names": [
+      "Successful member identity verification grants access to PHI",
+      "Session lockout and security alert triggered after three consecutive verification failures"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/hipaa/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-HIPAA-101",
+    "query": "3 consecutive identity verification failures log security alert AND admin manual unlock via Security Admin Portal",
+    "gold_scenario_names": [
+      "Session lockout and security alert triggered after three consecutive verification failures",
+      "Security administrator manually unlocks locked user session"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/hipaa/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-HIPAA-101",
+    "query": "user password 90-day expiration policy reset flow",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-RISK-101",
+    "query": "How does the system automatically recalculate health risk stratification scores when clinical condition codes change?",
+    "gold_scenario_names": [
+      "Recalculate HCC risk score upon ICD-10 code addition",
+      "Recalculate risk score upon ICD-10 code deletion",
+      "Recalculate risk score without historical retention"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/risk/full_coverage.feature",
+      "eval/generated_features/features/risk/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RISK-101",
+    "query": "REQ-RISK-101 ICD-10 recalculate HCC risk score 30 seconds audit log",
+    "gold_scenario_names": [
+      "Recalculate HCC risk score upon ICD-10 code addition"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/risk/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RISK-101",
+    "query": "recalculating risk score upon ICD-10 update within 30 seconds AND logging timeline alert AND rejecting deprecated codes",
+    "gold_scenario_names": [
+      "Recalculate HCC risk score upon ICD-10 code addition",
+      "Risk score increase triggers stratification alert on member timeline",
+      "Reject risk recalculation for invalid or deprecated ICD-10 code"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/risk/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-RISK-101",
+    "query": "manual care manager narrative risk note overrides for commercial payer plans",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-PROV-101",
+    "query": "How does the system update practitioner enrollment status and handle license expirations from external verification systems?",
+    "gold_scenario_names": [
+      "Synchronize CAQH provider credentialing changes on scheduled 24-hour cycle",
+      "Suspend provider enrollment upon license expiration",
+      "Scheduled CAQH provider sync without ledger logging",
+      "License expiration changes enrollment status to suspended"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/provider/full_coverage.feature",
+      "eval/generated_features/features/provider/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-PROV-101",
+    "query": "REQ-PROV-101 CAQH credentialing PSV Suspended-Pending-Review audit ledger retry 3 attempts",
+    "gold_scenario_names": [
+      "Synchronize CAQH provider credentialing changes on scheduled 24-hour cycle",
+      "Approve provider credentialing upon primary source verification completion",
+      "Retry failed synchronization attempt and escalate to IT operational ticket"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/provider/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-PROV-101",
+    "query": "synchronizing CAQH changes every 24 hours AND setting status to Suspended-Pending-Review on license expiration AND retrying 3 times before opening IT ticket",
+    "gold_scenario_names": [
+      "Synchronize CAQH provider credentialing changes on scheduled 24-hour cycle",
+      "Suspend provider enrollment upon license expiration",
+      "Retry failed synchronization attempt and escalate to IT operational ticket"
+    ],
+    "gold_files": [
+      "eval/generated_features/features/provider/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-PROV-101",
+    "query": "updating provider office suite address and public directory NPI lookup",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-PAAR-101",
+    "query": "How does the software handle tracking rejected authorization requests and filing secondary peer reviews?",
+    "gold_scenario_names": [
+      "Care manager logs prior authorization denial details",
+      "Care manager initiates a 1st-level appeal workflow",
+      "Care manager logs denial and initiates basic appeal"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/paar/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/paar/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-PAAR-101",
+    "query": "REQ-PAAR-101 1st-level appeal submission deadline alert 5 days prior",
+    "gold_scenario_names": [
+      "Care manager initiates a 1st-level appeal workflow"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/paar/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-PAAR-101",
+    "query": "uploading supporting medical documentation to an active appeal AND notifying prescribing provider upon resolution",
+    "gold_scenario_names": [
+      "Care manager initiates a 1st-level appeal workflow",
+      "Care manager resolves appeal with outcome decision and notifies provider"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/paar/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-PAAR-101",
+    "query": "submitting new prior authorization initial requests for ambulatory surgical procedures",
+    "gold_scenario_names": [],
+    "gold_files": []
+  },
+  {
+    "requirement_id": "REQ-MAMP-101",
+    "query": "How does the system identify patients missing their refill schedule and prompt clinical phone calls?",
+    "gold_scenario_names": [
+      "Nightly job calculates PDC metrics and flags non-adherent members",
+      "System triggers pharmacy outreach task for non-adherent member",
+      "Nightly PDC calculation and non-adherence flagging"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/mamp/full_coverage.feature",
+      "eval/generated_features/eval/generated_features/features/mamp/partial_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-MAMP-101",
+    "query": "REQ-MAMP-101 PDC threshold 80% non-adherent chronic medication",
+    "gold_scenario_names": [
+      "Nightly job calculates PDC metrics and flags non-adherent members"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/mamp/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-MAMP-101",
+    "query": "generating pharmacy outreach trigger tasks AND suppressing new triggers for 30 days post intervention",
+    "gold_scenario_names": [
+      "System triggers pharmacy outreach task for non-adherent member",
+      "Pharmacist documents outreach intervention and suppresses secondary triggers"
+    ],
+    "gold_files": [
+      "eval/generated_features/eval/generated_features/features/mamp/full_coverage.feature"
+    ]
+  },
+  {
+    "requirement_id": "REQ-MAMP-101",
+    "query": "processing routine electronic prescription refills and handling inventory stockouts",
     "gold_scenario_names": [],
     "gold_files": []
   }
