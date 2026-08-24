@@ -1,3 +1,14 @@
+
+
+# Evaluation results
+eval/results/
+
+# Dataset / data files
+data/
+
+# Cache
+.cache/
+
 .env
 .envrc
 
@@ -13,3 +24,4 @@ data/
 results/
 *.html
 reports/
+.cache/
