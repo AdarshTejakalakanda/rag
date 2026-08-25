@@ -5,7 +5,7 @@ acceptance criteria across files (connect-the-dots), without forcing 100/0.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Set
 import re
 
 from src.parsers.requirement_parser import RequirementChunk
@@ -26,20 +26,67 @@ def normalize_criterion(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
-def canonical_requirement_criteria(requirement: RequirementChunk) -> List[str]:
-    """Acceptance criteria plus business rules, skipping empty / placeholder rows."""
-    items: List[str] = []
-    seen = set()
-    for raw in list(requirement.acceptance_criteria or []) + list(requirement.business_rules or []):
+def extract_indexed_criteria(requirement: RequirementChunk) -> Tuple[Dict[str, str], str, str]:
+    """
+    Extracts all acceptance criteria and business rules and assigns deterministic IDs:
+    AC-1, AC-2, ... for Acceptance Criteria
+    BR-1, BR-2, ... for Business Rules
+    Returns:
+      criterion_id_map: Dict[str, str] mapping ID -> text
+      ac_formatted_string: e.g. "[AC-1] text\n[AC-2] text"
+      br_formatted_string: e.g. "[BR-1] text"
+    """
+    id_map: Dict[str, str] = {}
+    ac_lines = []
+    br_lines = []
+
+    # Process Acceptance Criteria
+    ac_idx = 1
+    for raw in requirement.acceptance_criteria or []:
         text = (raw or "").strip()
         if not text or text.lower() in ("none specified", "none", "n/a"):
             continue
-        key = normalize_criterion(text)
-        if not key or key in seen:
+        cleaned = re.sub(r"^\[(?:AC|BR|REQ)?\s*\d*\]\s*", "", text, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"^[-*•\d.]+\s*", "", cleaned).strip()
+        if not cleaned:
             continue
-        seen.add(key)
-        items.append(text)
-    return items
+        cid = f"AC-{ac_idx}"
+        id_map[cid] = cleaned
+        ac_lines.append(f"[{cid}] {cleaned}")
+        ac_idx += 1
+
+    # Process Business Rules
+    br_idx = 1
+    for raw in requirement.business_rules or []:
+        text = (raw or "").strip()
+        if not text or text.lower() in ("none specified", "none", "n/a"):
+            continue
+        cleaned = re.sub(r"^\[(?:AC|BR|REQ)?\s*\d*\]\s*", "", text, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"^[-*•\d.]+\s*", "", cleaned).strip()
+        if not cleaned:
+            continue
+        cid = f"BR-{br_idx}"
+        id_map[cid] = cleaned
+        br_lines.append(f"[{cid}] {cleaned}")
+        br_idx += 1
+
+    # Fallback if neither AC nor BR are explicitly defined
+    if not id_map:
+        fallback_text = (requirement.description or requirement.title or "").strip()
+        if fallback_text:
+            cid = "AC-1"
+            id_map[cid] = fallback_text
+            ac_lines.append(f"[{cid}] {fallback_text}")
+
+    ac_str = "\n".join(ac_lines) if ac_lines else "None specified"
+    br_str = "\n".join(br_lines) if br_lines else "None specified"
+    return id_map, ac_str, br_str
+
+
+def canonical_requirement_criteria(requirement: RequirementChunk) -> List[str]:
+    """Acceptance criteria plus business rules, skipping empty / placeholder rows."""
+    id_map, _, _ = extract_indexed_criteria(requirement)
+    return list(id_map.values())
 
 
 def map_to_canonical(stated: str, canonical: List[str]) -> Optional[str]:
@@ -91,6 +138,41 @@ def map_to_canonical(stated: str, canonical: List[str]) -> Optional[str]:
     return best_match
 
 
+def resolve_criterion_ids(raw_items: List[Any], id_map: Dict[str, str]) -> Set[str]:
+    """
+    Resolves raw LLM criterion references into canonical criterion IDs (AC-1, BR-1, etc.).
+    Supports exact ID keys, bracketed tokens ([AC-1]), prefix strings (AC-1: ...), or text matching.
+    """
+    resolved = set()
+    for item in raw_items or []:
+        if not item:
+            continue
+        s = str(item).strip()
+
+        # 1. Exact ID key match
+        if s.upper() in id_map:
+            resolved.add(s.upper())
+            continue
+
+        # 2. Regex token extraction for [AC-1] or AC-1 or BR-1
+        matched_tokens = re.findall(r"\b(AC-\d+|BR-\d+|REQ-\d+)\b", s, re.IGNORECASE)
+        for token in matched_tokens:
+            token_upper = token.upper()
+            if token_upper in id_map:
+                resolved.add(token_upper)
+
+        # 3. If no ID token found, fallback to similarity match against id_map values
+        if not matched_tokens:
+            mapped_text = map_to_canonical(s, list(id_map.values()))
+            if mapped_text:
+                for cid, text in id_map.items():
+                    if text == mapped_text:
+                        resolved.add(cid)
+                        break
+
+    return resolved
+
+
 def classify_from_percentage(match_percentage: int) -> str:
     """True ratio classification: 100 fully, 1-99 partial, 0 not covered. No forcing."""
     if match_percentage >= 100:
@@ -105,138 +187,114 @@ def compute_union_coverage(
     evaluations: List[Dict[str, Any]],
     overall_summary: Optional[Dict[str, Any]] = None,
     candidates: Optional[List[Tuple[ScenarioChunk, float, Dict[str, Any]]]] = None,
+    criterion_id_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Union unique criteria evidenced by any candidate. Does not use max(individual %)."""
-    overall_summary = overall_summary or {}
-    canonical = canonical_requirement_criteria(requirement)
+    """
+    Deterministic union aggregator:
+    - LLM provides per-scenario semantic evidence and criterion IDs.
+    - Python aggregator owns set union, exact percentage arithmetic, 0% clamp,
+      status classification (FULLY_COVERED, PARTIALLY_COVERED, NOT_COVERED), and citations.
+    """
+    if criterion_id_map is None:
+        criterion_id_map, _, _ = extract_indexed_criteria(requirement)
 
-    stated_covered: List[str] = []
-    for ev in evaluations:
-        if not isinstance(ev, dict):
-            continue
-        if int(ev.get("match_percentage", 0) or 0) <= 0:
-            continue
-        for item in ev.get("covered_criteria") or []:
-            if item:
-                stated_covered.append(str(item))
-    for item in overall_summary.get("covered_criteria") or []:
-        if item:
-            stated_covered.append(str(item))
+    total_count = len(criterion_id_map)
+    all_criterion_ids = list(criterion_id_map.keys())
 
-    if canonical:
-        union_covered: List[str] = []
-        seen = set()
-        for stated in stated_covered:
-            mapped = map_to_canonical(stated, canonical)
-            if mapped:
-                key = normalize_criterion(mapped)
-                if key not in seen:
-                    seen.add(key)
-                    union_covered.append(mapped)
-        missing = [c for c in canonical if normalize_criterion(c) not in seen]
-        total = len(canonical)
-        covered_n = len(union_covered)
-        union_pct = int(round((covered_n / total) * 100)) if total else 0
+    candidate_evals = [e for e in evaluations if isinstance(e, dict)]
+
+    # Collect per-candidate covered criteria IDs
+    cand_covered_map: Dict[str, Set[str]] = {}
+    valid_candidate_count = 0
+
+    for ev in candidate_evals:
+        sc_id = ev.get("scenario_id") or ev.get("document_id") or "unknown"
+        status = (ev.get("status") or "").strip().upper()
+
+        # Check if candidate is NOT_RELEVANT
+        if status in ("NOT_RELEVANT", "NOT_COVERED", "IRRELEVANT"):
+            cand_covered_map[sc_id] = set()
+            continue
+
+        raw_covered = ev.get("covered_criteria") or []
+        covered_ids = resolve_criterion_ids(raw_covered, criterion_id_map)
+
+        # Guardrail: if status was marked FULLY/PARTIALLY but no valid criteria IDs resolved:
+        if not covered_ids and int(ev.get("match_percentage", 0) or 0) <= 0:
+            cand_covered_map[sc_id] = set()
+            continue
+
+        cand_covered_map[sc_id] = covered_ids
+        if covered_ids:
+            valid_candidate_count += 1
+
+    # Mathematical Set Union across all valid candidates
+    union_covered_ids: Set[str] = set()
+    for c_ids in cand_covered_map.values():
+        union_covered_ids.update(c_ids)
+
+    # Deterministic 0% Clamp:
+    # If all candidates are NOT_RELEVANT or union has 0 covered criteria -> strictly 0% NOT_COVERED
+    if total_count == 0 or not union_covered_ids or valid_candidate_count == 0:
+        union_pct = 0
+        overall_classification = "NOT_COVERED"
+        union_covered_texts = []
+        missing_gap_texts = [criterion_id_map[cid] for cid in all_criterion_ids]
     else:
-        covered_norm = {}
-        for stated in stated_covered:
-            key = normalize_criterion(stated)
-            if key:
-                covered_norm[key] = stated.strip()
-        missing_norm = {}
-        for ev in evaluations:
-            if not isinstance(ev, dict):
-                continue
-            for item in ev.get("missing_gaps") or []:
-                key = normalize_criterion(str(item))
-                if key and key not in covered_norm:
-                    missing_norm[key] = str(item).strip()
-        for item in overall_summary.get("missing_gaps") or []:
-            key = normalize_criterion(str(item))
-            if key and key not in covered_norm:
-                missing_norm[key] = str(item).strip()
-        union_covered = list(covered_norm.values())
-        missing = list(missing_norm.values())
-        total = len(union_covered) + len(missing)
-        covered_n = len(union_covered)
-        if total:
-            union_pct = int(round((covered_n / total) * 100))
+        covered_n = len(union_covered_ids)
+        union_pct = int(round((covered_n / total_count) * 100))
+        union_pct = max(0, min(100, union_pct))
+
+        if union_pct >= 100:
+            overall_classification = "FULLY_COVERED"
+        elif union_pct > 0:
+            overall_classification = "PARTIALLY_COVERED"
         else:
-            llm_union = overall_summary.get("union_match_percentage")
-            union_pct = int(llm_union) if llm_union is not None else 0
+            overall_classification = "NOT_COVERED"
 
-    union_pct = max(0, min(100, union_pct))
+        # Deterministically order covered and missing lists
+        union_covered_texts = [criterion_id_map[cid] for cid in all_criterion_ids if cid in union_covered_ids]
+        missing_gap_texts = [criterion_id_map[cid] for cid in all_criterion_ids if cid not in union_covered_ids]
 
+    # Build coverage map
     cand_by_id = {}
     if candidates:
         for sc, _, _ in candidates:
             cand_by_id[sc.scenario_id] = sc
 
     coverage_map: List[Dict[str, Any]] = []
-    llm_map = overall_summary.get("coverage_map") or []
-    if isinstance(llm_map, list) and llm_map:
-        for row in llm_map:
-            if not isinstance(row, dict):
-                continue
-            sid = row.get("scenario_id") or ""
-            sc = cand_by_id.get(sid)
-            covers = row.get("covers") or []
-            if canonical:
-                mapped_covers = []
-                seen_c = set()
-                for item in covers:
-                    mapped = map_to_canonical(str(item), canonical)
-                    if mapped and normalize_criterion(mapped) not in seen_c:
-                        seen_c.add(normalize_criterion(mapped))
-                        mapped_covers.append(mapped)
-                covers = mapped_covers
-            coverage_map.append({
-                "scenario_id": sid,
-                "file_path": row.get("file_path") or (sc.file_path if sc else ""),
-                "scenario_name": sc.scenario_name if sc else row.get("scenario_name", ""),
-                "covers": covers,
-            })
-    else:
-        for ev in evaluations:
-            if not isinstance(ev, dict):
-                continue
-            sid = ev.get("scenario_id") or ev.get("document_id") or ""
-            sc = cand_by_id.get(sid)
-            covers_raw = ev.get("covered_criteria") or []
-            if canonical:
-                covers = []
-                seen_c = set()
-                for item in covers_raw:
-                    mapped = map_to_canonical(str(item), canonical)
-                    if mapped and normalize_criterion(mapped) not in seen_c:
-                        seen_c.add(normalize_criterion(mapped))
-                        covers.append(mapped)
-            else:
-                covers = [str(x) for x in covers_raw if x]
-            if not covers:
-                continue
-            coverage_map.append({
-                "scenario_id": sid,
-                "file_path": sc.file_path if sc else "",
-                "scenario_name": sc.scenario_name if sc else "",
-                "covers": covers,
-            })
+    for ev in candidate_evals:
+        sc_id = ev.get("scenario_id") or ev.get("document_id") or "unknown"
+        c_ids = cand_covered_map.get(sc_id, set())
+        if not c_ids:
+            continue
+        sc_obj = cand_by_id.get(sc_id)
+        coverage_map.append({
+            "scenario_id": sc_id,
+            "scenario_name": sc_obj.scenario_name if sc_obj else ev.get("scenario_name", ""),
+            "file_path": sc_obj.file_path if sc_obj else ev.get("file_path", ""),
+            "covered_criteria": [criterion_id_map[cid] for cid in all_criterion_ids if cid in c_ids],
+            "evidence": ev.get("evidence", []),
+            "reasoning": ev.get("reasoning", ""),
+        })
 
     narrative = (
-        overall_summary.get("connecting_narrative")
-        or overall_summary.get("union_reasoning")
+        (overall_summary or {}).get("connecting_narrative")
+        or (overall_summary or {}).get("reasoning_summary")
+        or (overall_summary or {}).get("union_reasoning")
         or ""
     ).strip()
 
     return {
         "union_match_percentage": union_pct,
-        "overall_classification": classify_from_percentage(union_pct),
-        "covered_criteria": union_covered,
-        "missing_gaps": missing,
+        "overall_classification": overall_classification,
+        "covered_criteria": union_covered_texts,
+        "missing_gaps": missing_gap_texts,
         "coverage_map": coverage_map,
         "connecting_narrative": narrative,
-        "covered_count": covered_n,
-        "total_criteria": total,
+        "covered_count": len(union_covered_ids),
+        "total_criteria": total_count,
+        "cand_covered_map": cand_covered_map,
     }
 
 
@@ -435,8 +493,7 @@ class LLMJudge:
             scenarios_text_blocks.append(sc_text)
 
         scenarios_formatted = "\n".join(scenarios_text_blocks)
-        ac_str = "\n".join(f"- {a}" for a in requirement.acceptance_criteria) if requirement.acceptance_criteria else "None specified"
-        rules_str = "\n".join(f"- {r}" for r in requirement.business_rules) if requirement.business_rules else "None specified"
+        criterion_id_map, ac_str, rules_str = extract_indexed_criteria(requirement)
 
         user_prompt = BATCH_JUDGE_USER_TEMPLATE.format(
             req_id=requirement.req_id,
@@ -466,18 +523,32 @@ class LLMJudge:
                 prompt_version=self.prompt_version,
             )
 
-        return self._build_verdict_from_response(requirement, candidates, response_dict)
+        return self._build_verdict_from_response(requirement, candidates, response_dict, criterion_id_map)
 
     def _build_verdict_from_response(
         self,
         requirement: RequirementChunk,
         candidates: List[Tuple[ScenarioChunk, float, Dict[str, Any]]],
         data: Dict[str, Any],
+        criterion_id_map: Optional[Dict[str, str]] = None,
     ) -> RequirementJudgeVerdict:
+        if criterion_id_map is None:
+            criterion_id_map, _, _ = extract_indexed_criteria(requirement)
+
         evals = data.get("evaluations", [])
         overall_summary = data.get("overall_summary", {}) or {}
-
         eval_map = {(e.get("scenario_id") or e.get("document_id")): e for e in evals if isinstance(e, dict)}
+
+        union = compute_union_coverage(
+            requirement=requirement,
+            evaluations=evals if isinstance(evals, list) else [],
+            overall_summary=overall_summary,
+            candidates=candidates,
+            criterion_id_map=criterion_id_map,
+        )
+
+        cand_covered_map = union.get("cand_covered_map", {})
+        total_crit = union.get("total_criteria", 0)
 
         citations: List[ScenarioCitation] = []
         max_candidate_match = 0
@@ -485,13 +556,23 @@ class LLMJudge:
 
         for sc, ce_score, meta in candidates:
             e_data = eval_map.get(sc.scenario_id, {})
-            c_match = int(e_data.get("match_percentage", 0) or 0)
-            c_match = max(0, min(100, c_match))
-            c_status = e_data.get("status") or classify_from_percentage(c_match)
-            if c_status == "NOT_COVERED":
+            c_covered_ids = cand_covered_map.get(sc.scenario_id, set())
+
+            if total_crit > 0 and c_covered_ids:
+                c_match = int(round((len(c_covered_ids) / total_crit) * 100))
+                c_match = max(0, min(100, c_match))
+            else:
+                c_match = 0
+
+            if c_match >= 100:
+                c_status = "FULLY_COVERED"
+            elif c_match > 0:
+                c_status = "PARTIALLY_COVERED"
+            else:
                 c_status = "NOT_RELEVANT"
+
             c_reason = e_data.get("reasoning", "")
-            c_covered = [str(x) for x in (e_data.get("covered_criteria") or []) if x]
+            c_covered = [criterion_id_map[cid] for cid in criterion_id_map if cid in c_covered_ids]
 
             raw_evidence = e_data.get("evidence", [])
             if isinstance(raw_evidence, list):
@@ -526,13 +607,6 @@ class LLMJudge:
                 covered_criteria=c_covered,
             ))
 
-        union = compute_union_coverage(
-            requirement=requirement,
-            evaluations=evals if isinstance(evals, list) else [],
-            overall_summary=overall_summary,
-            candidates=candidates,
-        )
-
         overall_match = union["union_match_percentage"]
         overall_classification = union["overall_classification"]
         if overall_match == 0:
@@ -542,8 +616,8 @@ class LLMJudge:
             "suggested_test_intents",
             overall_summary.get("suggested_tests", []),
         )
-        missing = union["missing_gaps"] or overall_summary.get("missing_gaps", [])
-        covered = union["covered_criteria"] or overall_summary.get("covered_criteria", [])
+        missing = union["missing_gaps"]
+        covered = union["covered_criteria"]
 
         return RequirementJudgeVerdict(
             req_id=requirement.req_id,

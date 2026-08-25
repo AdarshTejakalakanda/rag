@@ -261,19 +261,44 @@ class MilvusStore:
 
     def delete_by_file(self, file_path: str) -> None:
         """Deletes all scenario embeddings matching a given file_path."""
-        p_str = str(Path(file_path))
+        p_str = str(file_path)
+        target_norm = str(Path(file_path).resolve()).replace("\\", "/")
+        target_raw = str(file_path).replace("\\", "/")
+
         if self.collection:
             try:
-                expr = f'file_path == "{p_str}"'
+                p_esc = p_str.replace("\\", "\\\\")
+                p_norm_esc = target_norm.replace("\\", "\\\\")
+                expr = f'file_path == "{p_esc}" or file_path == "{p_norm_esc}"'
                 self.collection.delete(expr)
                 self.collection.flush()
             except Exception:
                 pass
-        to_del = [s_id for s_id, rec in self._local_fallback_store.items() if rec.get("file_path") == p_str]
+        to_del = [
+            s_id for s_id, rec in self._local_fallback_store.items()
+            if str(Path(rec.get("file_path", "")).resolve()).replace("\\", "/") == target_norm
+            or str(rec.get("file_path", "")).replace("\\", "/") == target_raw
+        ]
         for s_id in to_del:
             del self._local_fallback_store[s_id]
         if to_del:
             self._save_cache()
+
+    def clear_repo(self, repo_id: str) -> None:
+        """Removes all embeddings for a specific repository."""
+        if self.collection:
+            try:
+                expr = f'repo_id == "{repo_id}"'
+                self.collection.delete(expr)
+                self.collection.flush()
+            except Exception:
+                pass
+        to_del = [s_id for s_id, rec in self._local_fallback_store.items() if rec.get("repo_id") == repo_id]
+        for s_id in to_del:
+            del self._local_fallback_store[s_id]
+        if to_del:
+            self._save_cache()
+
 
     def count(self, repo_id: Optional[str] = None) -> int:
         if self.collection:

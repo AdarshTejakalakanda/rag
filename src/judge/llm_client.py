@@ -421,9 +421,13 @@ class LLMClient:
         ac_items = []
         if ac_block:
             for line in ac_block.group(1).splitlines():
-                cleaned = re.sub(r"^[-*•\d.\s]+", "", line).strip()
-                if cleaned and cleaned.lower() not in ("none specified", "none"):
-                    ac_items.append(cleaned)
+                cid_m = re.match(r"^\s*\[([A-Z0-9_\-]+)\]\s*(.*)", line)
+                if cid_m:
+                    ac_items.append((cid_m.group(1).upper(), cid_m.group(2).strip()))
+                else:
+                    cleaned = re.sub(r"^[-*•\d.\s]+", "", line).strip()
+                    if cleaned and cleaned.lower() not in ("none specified", "none"):
+                        ac_items.append((f"AC-{len(ac_items)+1}", cleaned))
 
         stopwords = {"show", "me", "the", "a", "an", "is", "in", "of", "and", "for", "to", "coverage", "what", "are", "about", "how", "can", "we", "verify", "test", "tests"}
         all_q_tokens = set(re.findall(r"\b[a-zA-Z0-9]+\b", q_text.lower()))
@@ -436,13 +440,13 @@ class LLMClient:
 
             if ac_items:
                 covered_criteria = []
-                for ac in ac_items:
+                for cid, ac in ac_items:
                     ac_tokens = set(re.findall(r"\b[a-zA-Z0-9]+\b", ac.lower())) - stopwords
                     ac_tokens = ac_tokens or set(re.findall(r"\b[a-zA-Z0-9]+\b", ac.lower()))
                     if ac_tokens and len(ac_tokens.intersection(c_tokens)) >= max(1, len(ac_tokens) // 3):
-                        covered_criteria.append(ac)
+                        covered_criteria.append(cid)
                 match_pct = int(round((len(covered_criteria) / len(ac_items)) * 100))
-                missing_gaps = [ac for ac in ac_items if ac not in covered_criteria]
+                missing_gaps = [cid for cid, ac in ac_items if cid not in covered_criteria]
             else:
                 overlap = q_tokens.intersection(c_tokens)
                 overlap_ratio = len(overlap) / max(len(q_tokens), 1)
@@ -504,7 +508,7 @@ class LLMClient:
 
         if ac_items:
             union_pct = int(round((len(union_covered) / len(ac_items)) * 100)) if ac_items else 0
-            missing_union = [ac for ac in ac_items if ac not in union_covered]
+            missing_union = [cid for cid, ac in ac_items if cid not in union_covered]
         else:
             missing_union = []
             for ev in evaluations:

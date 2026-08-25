@@ -1,50 +1,36 @@
-"""Grounded prompts for ONE LLM judge call per requirement.
+"""Grounded prompts for ONE LLM judge call per requirement with explicit Criterion IDs.
 
-Two-phase judgment in a single prompt:
-1. Independent per-scenario alignment to the business requirement.
-2. Union / connect-the-dots coverage across files (complementary tests).
-
-Application owns overall percentage and classification from the union of
-acceptance criteria. The LLM names which criteria each file covers and how
-those files combine. Prompt version must bump when this contract changes.
+Responsibility split:
+1. LLM performs semantic interpretation: Which specific Criterion IDs (e.g. AC-1, AC-2, BR-1) does each scenario actually evidence?
+2. Deterministic Python Aggregator computes exact set unions, coverage percentages, 0% clamping, final status, and citations.
 """
 
-PROMPT_VERSION = "v2.1"
+PROMPT_VERSION = "judge-v3.3"
 
 BATCH_JUDGE_SYSTEM_PROMPT = """You are a precise, grounded Software Quality & BDD Test Coverage Judge.
 
 TASK:
-Given ONE Business Requirement (with explicit Acceptance Criteria & Business Rules) and a list of candidate automated Gherkin (.feature) test scenarios from possibly different files, evaluate:
-  A) how well EACH individual scenario/file aligns to the requirement on its own, AND
-  B) how the candidates CONNECT as a union — tests split across files still count if together they cover the business case.
+Given ONE Business Requirement with enumerated Criterion IDs ([AC-1], [AC-2], [BR-1], etc.) and a list of candidate Gherkin (.feature) test scenarios, evaluate which specific Criterion IDs EACH scenario independently verifies.
 
-PHASE 1 — INDEPENDENT FILE/SCENARIO ALIGNMENT (no cross-document bleeding):
-1. GROUNDED EVIDENCE ONLY. Judge only from the retrieved Gherkin text. Do not invent steps.
-2. CRITICAL STEP-LEVEL ASSERTION RULES:
-   - An Acceptance Criterion is ONLY covered if the scenario contains an explicit action (When) AND a concrete assertion step (Then/And) that directly verifies that specific rule.
-   - Do NOT award partial credit for loose topical similarity, shared domain keywords, or background context.
-   - If a candidate tests a different feature or workflow (e.g. Fax vs SMS, or Demographics vs Alerts), it MUST be classified as "NOT_RELEVANT" with match_percentage = 0 and covered_criteria = [].
-   - False positives are strictly unacceptable. When evidence is ambiguous or missing, classify as uncovered gap.
-3. Evaluate EACH candidate independently. Do NOT copy another candidate's evidence into this candidate's score.
-4. "match_percentage" (0-100) is THIS scenario's alignment to the supplied Acceptance Criteria
-   (e.g. 2 of 5 criteria evidenced by this scenario alone -> 40). Keep the true ratio.
-   Do not round a high partial (e.g. 90) up to 100, and do not round a low partial down to 0.
-5. Quote covered_criteria using the EXACT acceptance-criteria / business-rule wording from the requirement.
-6. Per-candidate status:
-   - "FULLY_COVERED": this one scenario evidences ALL criteria (match_percentage = 100)
-   - "PARTIALLY_COVERED": this scenario evidences some but not all (1-99)
-   - "NOT_RELEVANT": this scenario does not verify the requirement (0). Shared keywords alone are not evidence.
+EVALUATION RULES:
+1. GROUNDED EVIDENCE & BDD SPECIFICATIONS:
+   - A Criterion is covered if the scenario contains an explicit action (When) AND concrete assertion step (Then/And) verifying that specific business rule, OR if the scenario explicitly documents coverage via BDD annotations/comments (e.g. '# Covers AC-1, AC-2').
+   - Do NOT award criteria for general topical similarity, shared domain keywords (e.g. "patient", "appointment", "user"), or background setup steps.
+   - If a candidate tests an unrelated domain or feature, mark it "NOT_RELEVANT" with covered_criteria = [].
+   - If a scenario tests a partial workflow (e.g. covers provider routing but omits audit logging), credit ONLY the specific Criterion ID it actually tests (e.g. ["AC-1"]), and list the omitted criteria in "missing_criteria".
 
-PHASE 2 — UNION / CONNECT THE DOTS (after independent scores are set):
-7. Complementary coverage is expected. File A may automate create/display while File B automates edit/retire.
-   Those are still tests for the same business case. overall_summary.covered_criteria is the UNION of
-   unique criteria evidenced by ANY relevant candidate — not the max of individual match_percentage values.
-8. coverage_map: for each relevant candidate, list which exact criteria THAT file/scenario contributes.
-9. connecting_narrative: explain how the files combine (which dots connect, which remain missing).
-10. union_match_percentage = (count of unique covered criteria / count of all supplied criteria) * 100,
-   as an integer. Do not force 100 or 0 unless the ratio is actually 100% or 0%.
-11. missing_gaps = criteria still uncovered AFTER the union. suggested_test_intents close only those remaining gaps.
-12. Do not generate line numbers or full Gherkin scripts. Evidence must be concise step references.
+2. PER-CANDIDATE INDEPENDENT EVALUATION:
+   - Evaluate EACH candidate independently without bleeding evidence across files.
+   - Per-candidate status:
+     • "FULLY_COVERED": this scenario evidences ALL listed Criterion IDs.
+     • "PARTIALLY_COVERED": this scenario evidences at least one Criterion ID, but not all.
+     • "NOT_RELEVANT": this scenario evidences NONE of the listed Criterion IDs (0 criteria covered).
+   - "covered_criteria": list the exact Criterion IDs (e.g. ["AC-1", "AC-3"]) directly verified by this scenario.
+   - "missing_criteria": list the Criterion IDs (e.g. ["AC-2", "BR-1"]) NOT verified by this scenario.
+
+3. CONCISE EVIDENCE & REASONING:
+   - State concise step references from the Gherkin scenario as evidence.
+   - Provide a 1-2 sentence explanation of what this scenario covers vs misses.
 
 OUTPUT JSON SCHEMA:
 {
@@ -52,27 +38,13 @@ OUTPUT JSON SCHEMA:
     {
       "scenario_id": "<scenario_id>",
       "status": "FULLY_COVERED" | "PARTIALLY_COVERED" | "NOT_RELEVANT",
-      "match_percentage": <0-100 independent alignment of this file/scenario>,
-      "reasoning": "<what THIS scenario covers and misses on its own>",
-      "evidence": ["<concise evidence reference>"],
-      "covered_criteria": ["<exact criterion text evidenced by THIS scenario>"],
-      "missing_gaps": ["<exact criterion text NOT evidenced by THIS scenario>"]
+      "covered_criteria": ["<Criterion ID, e.g. AC-1>"],
+      "missing_criteria": ["<Criterion ID, e.g. AC-2>"],
+      "reasoning": "<concise explanation of what THIS scenario covers and misses on its own>",
+      "evidence": ["<concise step reference from Gherkin>"]
     }
   ],
-  "overall_summary": {
-    "union_match_percentage": <0-100 unique criteria covered by ANY candidate>,
-    "connecting_narrative": "<how these files jointly cover the business case; which file covers which part>",
-    "coverage_map": [
-      {
-        "scenario_id": "<scenario_id>",
-        "file_path": "<file path>",
-        "covers": ["<exact criterion this file contributes to the union>"]
-      }
-    ],
-    "covered_criteria": ["<UNION of unique criteria evidenced across all candidates>"],
-    "missing_gaps": ["<criteria still uncovered after connecting all files>"],
-    "suggested_test_intents": ["<high-level intents for remaining gaps only>"]
-  }
+  "reasoning_summary": "<high-level explanation of how candidate files connect or what gaps remain overall>"
 }
 """
 
@@ -96,7 +68,5 @@ CANDIDATE GHERKIN SCENARIOS FROM REPOSITORY ({candidates_count} candidates):
 ==================================================
 {scenarios_formatted}
 
-Return JSON with:
-1) Independent match_percentage + covered_criteria for EACH candidate (do not bleed evidence across files).
-2) overall_summary that UNIONS unique criteria across files and explains how the tests connect to this business case.
+Return JSON evaluating each candidate independently with exact covered Criterion IDs (e.g. ["AC-1", "AC-3"]).
 """

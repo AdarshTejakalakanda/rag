@@ -169,7 +169,7 @@ def handle_chat(args):
             res = pipeline.chat(message=prompt, repo_id=repo_id, chat_id=chat_id)
             chat_id = res["chat_id"]
 
-            cache_tag = " [magenta](⚡ Semantic Cache Hit)[/magenta]" if res.get("cached") else ""
+            cache_tag = " [magenta](  Semantic Cache Hit)[/magenta]" if res.get("cached") else ""
             console.print(f"\n[bold cyan]Assistant{cache_tag}:[/bold cyan]\n{res['reply']}\n")
             if res.get("citations"):
                 console.print("[dim]Grounded Scenario Citations:[/dim]")

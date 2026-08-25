@@ -1,5 +1,4 @@
-"""Sparse BM25 Index for lexical retrieval of Gherkin scenarios with multi-repo support."""
-
+from pathlib import Path
 import re
 import math
 from typing import List, Tuple, Dict, Optional
@@ -97,5 +96,11 @@ class BM25Index:
 
     def remove_by_file(self, file_path: str) -> None:
         """Removes scenarios belonging to a specific file and rebuilds index."""
-        self.scenarios = [s for s in self.scenarios if s.file_path != file_path]
+        target_norm = str(Path(file_path).resolve()).replace("\\", "/")
+        target_raw = str(file_path).replace("\\", "/")
+        self.scenarios = [
+            s for s in self.scenarios
+            if str(Path(s.file_path).resolve()).replace("\\", "/") != target_norm
+            and str(s.file_path).replace("\\", "/") != target_raw
+        ]
         self.index_scenarios(self.scenarios)

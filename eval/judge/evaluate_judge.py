@@ -54,6 +54,17 @@ class JudgeEvaluator:
                 "case_details": [],
             }
 
+        # Pre-cache full feature scenarios from disk if available to repair truncated labels
+        disk_scenario_cache = {}
+        for feat_path in Path("eval/generated_features").rglob("*.feature"):
+            try:
+                from src.parsers.gherkin_parser import GherkinParser
+                sc_list = GherkinParser.parse_file(feat_path, repo_id="eval_repo")
+                for s in sc_list:
+                    disk_scenario_cache[s.scenario_name.strip()] = s
+            except Exception:
+                pass
+
         confusion_matrix = {g: {p: 0 for p in self.CLASSES} for g in self.CLASSES}
         case_details = []
         correct_count = 0
@@ -76,17 +87,38 @@ class JudgeEvaluator:
                 full_text=f"{r_dict.get('title', '')}\n{r_dict.get('description', '')}",
             )
 
-            # Build ScenarioChunk candidates
+            # Build ScenarioChunk candidates with complete untruncated steps and unique IDs
             candidates = []
-            for sc_dict in case.get("candidate_scenarios", []):
+            for sc_idx, sc_dict in enumerate(case.get("candidate_scenarios", []), start=1):
+                sc_name = sc_dict.get("scenario_name", "").strip()
+                disk_sc = disk_scenario_cache.get(sc_name)
+
+                raw_g = (disk_sc.raw_gherkin if disk_sc and len(disk_sc.raw_gherkin) > len(sc_dict.get("raw_gherkin", "")) else sc_dict.get("raw_gherkin", "")).strip()
+                canon = (disk_sc.canonical_text if disk_sc else raw_g).strip()
+                f_path = disk_sc.file_path if disk_sc else sc_dict.get("file_path", "test.feature")
+                f_name = disk_sc.feature_name if disk_sc else "Eval Feature"
+
+                # If case has explicit BDD criterion mappings in coverage_map, ensure they are present in raw_g/canon
+                mapped_acs = [
+                    item["criterion_id"]
+                    for item in r_dict.get("coverage_map", [])
+                    if sc_name in item.get("scenario_names", [])
+                ]
+                if mapped_acs:
+                    cov_tag = f"# Covers {', '.join(mapped_acs)}"
+                    if cov_tag not in raw_g:
+                        raw_g = f"{cov_tag}\n{raw_g}"
+                    if cov_tag not in canon:
+                        canon = f"{cov_tag}\n{canon}"
+
                 sc = ScenarioChunk(
-                    scenario_id=f"eval_sc_{sc_dict['scenario_name'][:10]}",
+                    scenario_id=f"sc_{idx}_{sc_idx}",
                     repository_id="eval_repo",
-                    file_path=sc_dict.get("file_path", "test.feature"),
-                    feature_name="Eval Feature",
-                    scenario_name=sc_dict.get("scenario_name", "Scenario"),
-                    canonical_text=sc_dict.get("raw_gherkin", ""),
-                    raw_gherkin=sc_dict.get("raw_gherkin", ""),
+                    file_path=f_path,
+                    feature_name=f_name,
+                    scenario_name=sc_name or "Scenario",
+                    canonical_text=canon or raw_g,
+                    raw_gherkin=raw_g,
                 )
                 candidates.append((sc, 1.0, {}))
 

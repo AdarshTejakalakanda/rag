@@ -1,2 +1,0 @@
-[console_scripts]
-coverage-agent = src.cli:main

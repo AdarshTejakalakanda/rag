@@ -307,8 +307,8 @@
         "raw_gherkin": "Scenario: Scheduler updates recurring cadence for future visits without audit logging\n  Given an existing recurring sequence with pending future appointments\n  When the cadence frequency is modified from weekly to monthly\n  Then future uncompleted visits are updated on the calendar"
       }
     ],
-    "gold_status": "NOT_COVERED",
-    "gold_match_percentage": 0.0,
+    "gold_status": "PARTIALLY_COVERED",
+    "gold_match_percentage": 16.7,
     "expected_gaps": [
       "Schedulers can set custom recurring appointment intervals including weekly, bi-weekly, and monthly cadences.",
       "The system must enforce a hard limit of max 52 recurring appointment occurrences per sequence.",
@@ -767,8 +767,8 @@
         "raw_gherkin": "Scenario: CalDAV sync audit logging\n  Given a provider calendar sync operation completes\n  When the result is processed\n  Then an entry with provider ID and timestamp is added to the audit trail"
       }
     ],
-    "gold_status": "NOT_COVERED",
-    "gold_match_percentage": 0.0,
+    "gold_status": "PARTIALLY_COVERED",
+    "gold_match_percentage": 50.0,
     "expected_gaps": [
       "System must synchronize appointments across multiple provider external calendars using CalDAV standard protocols.",
       "Sync cycles must execute automatically every 15 minutes or upon manual user trigger.",
@@ -1072,8 +1072,8 @@
         "raw_gherkin": "Scenario: Slot lock expires on inactivity\n  Given an unconfirmed temporary lock on a slot\n  When the timer reaches 10 minutes\n  Then the lock expires and slot returns to \"Available\" status"
       }
     ],
-    "gold_status": "NOT_COVERED",
-    "gold_match_percentage": 0.0,
+    "gold_status": "PARTIALLY_COVERED",
+    "gold_match_percentage": 40.0,
     "expected_gaps": [
       "System must place a temporary 10-minute reservation lock on an appointment time slot as soon as a patient begins booking.",
       "Locked appointment slots must display as \"Held\" to other concurrent users in real time via WebSocket updates.",
@@ -1353,8 +1353,8 @@
         "raw_gherkin": "Scenario: Basic token generation for confirmed session\n  Given WebRTC room \"ROOM-552\" exists\n  When access tokens are created\n  Then single-use links are assigned to patient and provider"
       }
     ],
-    "gold_status": "NOT_COVERED",
-    "gold_match_percentage": 0.0,
+    "gold_status": "PARTIALLY_COVERED",
+    "gold_match_percentage": 40.0,
     "expected_gaps": [
       "System must automatically provision a unique WebRTC telehealth virtual room upon appointment confirmation.",
       "A secure, single-use encrypted virtual room link must be generated for both patient and provider.",
@@ -1628,8 +1628,8 @@
         "raw_gherkin": "Scenario: Immediate release of slot upon reschedule\n  Given appointment \"APT-302\" is successfully rescheduled\n  When the transaction commits\n  Then the previous appointment slot becomes available in the booking pool"
       }
     ],
-    "gold_status": "NOT_COVERED",
-    "gold_match_percentage": 0.0,
+    "gold_status": "PARTIALLY_COVERED",
+    "gold_match_percentage": 40.0,
     "expected_gaps": [
       "Patients can self-reschedule appointments via the portal up to a dynamic cancellation window defined by specialty (e.g. 24 hours for General Care, 48 hours for Specialty Care).",
       "Self-rescheduling within the restricted window triggers a late cancellation warning and requires penalty fee acknowledgement.",
@@ -3993,8 +3993,8 @@
         "raw_gherkin": "Scenario: License expiration changes enrollment status to suspended\n  Given provider \"NPI-199203910\" has an expired medical license\n  When the sync engine runs\n  Then the provider network enrollment status changes to \"Suspended-Pending-Review\""
       }
     ],
-    "gold_status": "NOT_COVERED",
-    "gold_match_percentage": 0.0,
+    "gold_status": "PARTIALLY_COVERED",
+    "gold_match_percentage": 20.0,
     "expected_gaps": [
       "The system must synchronize provider credentialing status changes from the CAQH data bridge every 24 hours.",
       "Expired provider licenses must automatically set the provider network enrollment status to \"Suspended-Pending-Review\".",

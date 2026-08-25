@@ -127,23 +127,38 @@ async def register_repository(req: RepoRegisterRequest):
     p = get_pipeline()
     wm = get_watchdog_mgr()
     try:
+        raw_path = (req.repo_path or "").strip().strip('"').strip("'").strip()
         repo_info = p.repo_manager.add_repository(
-            repo_name=req.repo_name,
-            repo_path=req.repo_path or "",
-            repo_id=req.repo_id,
+            repo_name=req.repo_name.strip(),
+            repo_path=raw_path,
+            repo_id=req.repo_id.strip() if req.repo_id else None,
             branch=req.branch or "main",
         )
         count = 0
-        if req.repo_path and Path(req.repo_path).exists() and Path(req.repo_path).is_dir():
-            count = p.index_features(
-                feature_dir=req.repo_path,
-                repo_id=repo_info["repo_id"],
-                repo_name=repo_info["repo_name"]
-            )
-            wm.add_watch_directory(req.repo_path, repo_id=repo_info["repo_id"])
+        if raw_path:
+            p_dir = Path(raw_path).resolve()
+            if not p_dir.exists():
+                try:
+                    p_dir.mkdir(parents=True, exist_ok=True)
+                except Exception as me:
+                    print(f"[API] Notice creating repo path: {me}")
+            if p_dir.exists() and p_dir.is_dir():
+                count = p.index_features(
+                    feature_dir=p_dir,
+                    repo_id=repo_info["repo_id"],
+                    repo_name=repo_info["repo_name"]
+                )
+                p.state_db.add_repo_folder(
+                    repo_id=repo_info["repo_id"],
+                    folder_path=str(p_dir),
+                    scenario_count=count
+                )
+                wm.add_watch_directory(p_dir, repo_id=repo_info["repo_id"])
 
         return {"status": "success", "repository": repo_info, "scenarios_indexed": count}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -190,12 +205,30 @@ async def list_repo_folders(repo_id: str):
 async def add_folder_to_repo(repo_id: str, req: FolderAddRequest):
     p = get_pipeline()
     wm = get_watchdog_mgr()
-    folder_path = Path(req.folder_path).resolve()
-    if not folder_path.exists() or not folder_path.is_dir():
-        raise HTTPException(status_code=400, detail=f"Directory does not exist: {req.folder_path}")
+    raw_path = req.folder_path.strip().strip('"').strip("'").strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail="Folder path cannot be empty.")
+
+    folder_path = Path(raw_path).resolve()
+    if not folder_path.exists():
+        try:
+            folder_path.mkdir(parents=True, exist_ok=True)
+        except Exception as ce:
+            raise HTTPException(status_code=400, detail=f"Directory does not exist and could not be created: {raw_path} ({ce})")
+
+    if not folder_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Specified path is not a directory: {raw_path}")
+
+    # Ensure repo is registered in repositories table
+    try:
+        repo = p.repo_manager.get_repository(repo_id)
+        if not repo:
+            p.repo_manager.add_repository(repo_name=repo_id, repo_path=str(folder_path), repo_id=repo_id)
+    except Exception as re:
+        print(f"[API] Repo ensure notice: {re}")
 
     try:
-        # 1. Parse and index features in this folder
+        # 1. Parse and index features/documents in this folder
         scenarios = p.index_features(
             feature_dir=folder_path,
             repo_id=repo_id,
@@ -219,6 +252,8 @@ async def add_folder_to_repo(repo_id: str, req: FolderAddRequest):
             "watching": True
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -886,7 +921,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <!-- Top Header -->
   <header>
     <div class="brand">
-      <span class="brand-icon">⚡</span>
+      <span class="brand-icon"> </span>
       <span class="brand-title">Local RAG BDD Automation Agent</span>
     </div>
     <div class="header-actions">
@@ -924,7 +959,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           <!-- Sub-Section A: Repositories Management -->
           <div class="panel-card">
             <div class="panel-header">
-              <h3>📦 Automation Repositories</h3>
+              <h3>  Automation Repositories</h3>
               <button class="btn btn-secondary" onclick="toggleAddRepoForm()">+ New Repo</button>
             </div>
 
@@ -968,16 +1003,16 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Right Column: Live Watchdog Activity & Telemetry -->
         <div class="panel-card">
           <div class="panel-header">
-            <h3>⚡ Live Watchdog & Re-indexing Activity</h3>
+            <h3>  Live Watchdog & Re-indexing Activity</h3>
             <span class="badge badge-live" id="watchdogLiveCount">Watching 0 Folders</span>
           </div>
 
           <p style="font-size: 12.5px; color: var(--text-muted);">
-            Changes to <code>.feature</code> files in any registered folder are automatically detected and incrementally re-indexed.
+            Changes to test & specification files (<code>.feature</code>, <code>.md</code>, <code>.txt</code>, <code>.json</code>, <code>.yaml</code>, etc.) in any registered folder are automatically detected and incrementally re-indexed.
           </p>
 
           <div class="activity-feed" id="activityFeed">
-            <div class="event-entry">⚡ In-process watchdog engine running. Real-time file change logs will appear here.</div>
+            <div class="event-entry">  In-process watchdog engine running. Real-time file change logs will appear here.</div>
           </div>
         </div>
 
@@ -1006,7 +1041,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           <div id="indexingBanner" style="display: none; background: rgba(234, 179, 8, 0.12); border-bottom: 1px solid rgba(234, 179, 8, 0.3); padding: 10px 20px; font-size: 13px; color: #fde047; align-items: center; justify-content: space-between; flex-shrink: 0;">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="watchdog-pulse" style="background: #fde047; box-shadow: 0 0 8px #fde047;"></span>
-              <span id="indexingBannerText">⚡ Indexing in progress... Analysis will be available as soon as indexing completes.</span>
+              <span id="indexingBannerText">  Indexing in progress... Analysis will be available as soon as indexing completes.</span>
             </div>
             <div style="width: 140px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
               <div id="indexingProgressBar" style="width: 50%; height: 100%; background: #fde047; transition: width 0.3s;"></div>
@@ -1053,7 +1088,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     <div class="modal-content" style="max-width: 860px; max-height: 88vh;">
       <div class="modal-header">
         <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-size: 20px;">📊</span>
+          <span style="font-size: 20px;"> </span>
           <div>
             <h3 id="reportModalTitle" style="font-size: 16px; color: #fff;">Coverage Assessment & Gap Analysis</h3>
             <div id="reportModalSubtitle" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;"></div>
@@ -1187,8 +1222,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             <div class="meta">ID: <code>${r.repo_id}</code> | Scenarios: <b>${r.scenario_count || 0}</b> | Corpus: <b>v${r.corpus_version || 1}</b></div>
           </div>
           <div style="display: flex; gap: 6px;" onclick="event.stopPropagation()">
-            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="reindexRepo('${r.repo_id}')">🔄 Re-index</button>
-            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteRepo('${r.repo_id}')">🗑️</button>
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="reindexRepo('${r.repo_id}')">Re-index</button>
+            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteRepo('${r.repo_id}')"> delete</button>
           </div>
         `;
         list.appendChild(card);
@@ -1283,8 +1318,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             </div>
           </div>
           <div style="display: flex; gap: 6px;">
-            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="reindexFolder('${f.folder_id}')">🔄</button>
-            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="removeFolder('${f.folder_id}')">🗑️</button>
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="reindexFolder('${f.folder_id}')"> Reindex</button>
+            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="removeFolder('${f.folder_id}')"> delete</button>
           </div>
         `;
         list.appendChild(div);
@@ -1341,7 +1376,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         if (w.recent_events && w.recent_events.length > 0) {
           feed.innerHTML = w.recent_events.map(e => `
             <div class="event-entry ${e.event_type}">
-              <b>[${e.time}]</b> ⚡ File <b>${e.event_type}</b>: <code>${e.file_name}</code> (Repo: <b>${e.repo_id}</b>, ${e.scenarios_count} scenarios re-indexed)
+              <b>[${e.time}]</b>   File <b>${e.event_type}</b>: <code>${e.file_name}</code> (Repo: <b>${e.repo_id}</b>, ${e.scenarios_count} scenarios re-indexed)
             </div>
           `).join('');
         }
@@ -1377,7 +1412,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             <div class="session-title">${s.title || 'Conversation'}</div>
             <div class="session-time">${String(s.updated_at || s.created_at).slice(0, 16)}</div>
           </div>
-          <button class="btn btn-danger" style="padding: 2px 6px; font-size: 10px;" onclick="event.stopPropagation(); deleteChatSession('${s.chat_id}')">🗑️</button>
+          <button class="btn btn-danger" style="padding: 2px 6px; font-size: 10px;" onclick="event.stopPropagation(); deleteChatSession('${s.chat_id}')"> delete</button>
         `;
         list.appendChild(div);
       });
@@ -1485,7 +1520,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
       let cacheHtml = '';
       if (isCached) {
-        cacheHtml = '<div style="margin-bottom: 8px;"><span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35); font-size: 11px; padding: 2px 7px;">⚡ Semantic Cache Hit</span></div>';
+        cacheHtml = '<div style="margin-bottom: 8px;"><span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35); font-size: 11px; padding: 2px 7px;">  Semantic Cache Hit</span></div>';
       }
 
       // Check if this is a structured evaluation response
@@ -1536,14 +1571,14 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           ${cacheHtml}
           <div class="eval-summary-card">
             <div class="eval-header">
-              <div class="eval-title">📊 Coverage Assessment</div>
+              <div class="eval-title">  Coverage Assessment</div>
               <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 12px; padding: 3px 9px;">${escapeHtml(statusText)}</span>
             </div>
             <div class="eval-summary-text">${formatMarkdown(summaryText)}</div>
             ${citationPillsHtml}
             <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
               <button class="btn-report" onclick="openReportModal('${reportId}')">
-                🔍 View Full Details & Generated Scenarios &rarr;
+                  View Full Details & Generated Scenarios &rarr;
               </button>
             </div>
           </div>
@@ -1693,7 +1728,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
           // Show banner
           banner.style.display = 'flex';
-          bannerText.textContent = `⚡ Indexing in progress: ${st.current_indexing_file || 'Processing'} (${st.indexing_progress_pct}%). Analysis will unlock when completed.`;
+          bannerText.textContent = `  Indexing in progress: ${st.current_indexing_file || 'Processing'} (${st.indexing_progress_pct}%). Analysis will unlock when completed.`;
           progressBar.style.width = `${st.indexing_progress_pct}%`;
 
           // Disable chat inputs

@@ -10,7 +10,7 @@ import threading
 from typing import Callable, Optional, Set
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent, FileMovedEvent
-from src.parsers.gherkin_parser import GherkinParser
+from src.parsers.gherkin_parser import GherkinParser, UniversalFileParser
 from src.index.bm25_index import BM25Index
 from src.index.milvus_store import MilvusStore
 from src.index.embedding_model import EmbeddingModel
@@ -18,48 +18,83 @@ from src.storage.state_db import StateDatabase, fast_hash
 
 
 class FeatureFileEventHandler(FileSystemEventHandler):
-    """Event handler for .feature file modifications with debouncing."""
+    """Event handler for all repository file modifications with robust trailing-edge debouncing."""
 
     def __init__(
         self,
         on_change_callback: Callable[[str, str], None],
-        debounce_seconds: float = 1.5,
+        debounce_seconds: float = 1.0,
     ):
         super().__init__()
         self.on_change_callback = on_change_callback
         self.debounce_seconds = debounce_seconds
-        self._last_events: dict = {}
+        self._timers: dict = {}
+        self._pending_events: dict = {}
         self._lock = threading.Lock()
 
-    def _should_process(self, path: str) -> bool:
-        if not path.endswith(".feature"):
-            return False
-        now = time.time()
+    def _schedule_event(self, file_path: str, event_type: str):
+        if not UniversalFileParser.is_indexable(file_path):
+            return
+
         with self._lock:
-            last_time = self._last_events.get(path, 0)
-            if now - last_time < self.debounce_seconds:
-                return False
-            self._last_events[path] = now
-            return True
+            # Cancel existing timer for this file if new write event arrives
+            if file_path in self._timers:
+                try:
+                    self._timers[file_path].cancel()
+                except Exception:
+                    pass
+
+            prev = self._pending_events.get(file_path)
+            if prev == "created" and event_type == "modified":
+                self._pending_events[file_path] = "created"
+            else:
+                self._pending_events[file_path] = event_type
+
+            # Trailing-edge debounce timer: fires once file writes have settled
+            timer = threading.Timer(
+                self.debounce_seconds,
+                self._dispatch_event,
+                args=[file_path],
+            )
+            timer.daemon = True
+            self._timers[file_path] = timer
+            timer.start()
+
+    def _dispatch_event(self, file_path: str):
+        with self._lock:
+            event_type = self._pending_events.pop(file_path, "modified")
+            self._timers.pop(file_path, None)
+
+        try:
+            self.on_change_callback(file_path, event_type)
+        except Exception as e:
+            print(f"[Watcher] Callback exception for '{file_path}': {e}")
 
     def on_created(self, event):
-        if not event.is_directory and self._should_process(event.src_path):
-            self.on_change_callback(event.src_path, "created")
+        if event.is_directory:
+            try:
+                for p in Path(event.src_path).rglob("*"):
+                    if p.is_file() and UniversalFileParser.is_indexable(p):
+                        self._schedule_event(str(p), "created")
+            except Exception:
+                pass
+        else:
+            self._schedule_event(event.src_path, "created")
 
     def on_modified(self, event):
-        if not event.is_directory and self._should_process(event.src_path):
-            self.on_change_callback(event.src_path, "modified")
+        if not event.is_directory:
+            self._schedule_event(event.src_path, "modified")
 
     def on_deleted(self, event):
-        if not event.is_directory and event.src_path.endswith(".feature"):
-            self.on_change_callback(event.src_path, "deleted")
+        if not event.is_directory and UniversalFileParser.is_indexable(event.src_path):
+            self._schedule_event(event.src_path, "deleted")
 
     def on_moved(self, event):
         if not event.is_directory:
-            if event.src_path.endswith(".feature"):
-                self.on_change_callback(event.src_path, "deleted")
-            if event.dest_path.endswith(".feature") and self._should_process(event.dest_path):
-                self.on_change_callback(event.dest_path, "created")
+            if UniversalFileParser.is_indexable(event.src_path):
+                self._schedule_event(event.src_path, "deleted")
+            if UniversalFileParser.is_indexable(event.dest_path):
+                self._schedule_event(event.dest_path, "created")
 
 
 class FeatureRepositoryWatcher:
@@ -73,7 +108,7 @@ class FeatureRepositoryWatcher:
         embedding_model: EmbeddingModel,
         state_db: Optional[StateDatabase] = None,
         repo_id: str = "default",
-        debounce_seconds: float = 1.5,
+        debounce_seconds: float = 1.0,
         on_reindex_done: Optional[Callable[[str, int], None]] = None,
     ):
         self.watch_dir = Path(watch_dir)
@@ -90,17 +125,34 @@ class FeatureRepositoryWatcher:
     def handle_file_change(self, file_path: str, event_type: str) -> None:
         """Processes file event and synchronizes indices."""
         path = Path(file_path)
-        print(f"[Watcher] File event detected: '{event_type}' on '{path.name}'")
+        p_resolved = str(path.resolve())
+        print(f"[Watcher] File event detected: '{event_type}' on '{path.name}' (Repo: {self.repo_id})")
 
         scenarios_count = 0
         if event_type in ("created", "modified") and path.exists():
             try:
-                f_text = path.read_text(encoding="utf-8", errors="ignore")
+                # Retry loop to gracefully handle Windows in-flight file writes and locks
+                f_text = ""
+                for attempt in range(5):
+                    try:
+                        if not path.exists():
+                            return
+                        f_text = path.read_text(encoding="utf-8", errors="ignore")
+                        if f_text.strip():
+                            break
+                        time.sleep(0.1)
+                    except (PermissionError, IOError):
+                        time.sleep(0.15)
+
+                if not f_text.strip():
+                    print(f"[Watcher] Warning: File '{path.name}' is empty or unreadable after write.")
+                    return
+
                 new_hash = fast_hash(f_text)
 
                 # Authoritative change check: skip if hash unchanged
                 if self.state_db:
-                    existing = self.state_db.get_feature_file(self.repo_id, str(path))
+                    existing = self.state_db.get_feature_file(self.repo_id, p_resolved)
                     if existing and existing.get("file_hash") == new_hash:
                         print(f"[Watcher] File '{path.name}' hash unchanged. Index is up to date.")
                         return
@@ -109,23 +161,27 @@ class FeatureRepositoryWatcher:
                     self.state_db.set_repo_indexing_status(self.repo_id, "INDEXING", current_file=path.name, progress_pct=30)
 
                 # 1. Remove stale entries from Milvus and BM25
-                self.milvus_store.delete_by_file(str(path))
-                self.bm25_index.remove_by_file(str(path))
+                self.milvus_store.delete_by_file(p_resolved)
+                self.bm25_index.remove_by_file(p_resolved)
 
-                scenarios = GherkinParser.parse_file(path, repo_id=self.repo_id)
+                scenarios = UniversalFileParser.parse_file(path, repo_id=self.repo_id)
                 if scenarios:
                     texts = [s.full_text for s in scenarios]
                     embeddings = self.embedding_model.encode(texts)
                     self.milvus_store.upsert(scenarios, embeddings)
 
-                    all_scenarios = [s for s in self.bm25_index.scenarios if s.file_path != str(path)] + scenarios
+                    # Update BM25 with clean deduplicated set
+                    all_scenarios = [
+                        s for s in self.bm25_index.scenarios
+                        if str(Path(s.file_path).resolve()) != p_resolved and s.file_path != str(path)
+                    ] + scenarios
                     self.bm25_index.index_scenarios(all_scenarios)
                     scenarios_count = len(scenarios)
 
                     if self.state_db:
                         try:
                             self.state_db.update_feature_file(
-                                file_path=str(path),
+                                file_path=p_resolved,
                                 repo_id=self.repo_id,
                                 file_hash=new_hash,
                                 scenario_count=scenarios_count,
@@ -139,7 +195,7 @@ class FeatureRepositoryWatcher:
                 if self.state_db:
                     self.state_db.set_repo_indexing_status(self.repo_id, "READY", current_file="", progress_pct=100)
 
-                print(f"[Watcher] Successfully synchronized {scenarios_count} scenarios from '{path.name}'.")
+                print(f"[Watcher] Successfully synchronized {scenarios_count} item(s) from '{path.name}'.")
             except Exception as e:
                 print(f"[Watcher] Error indexing {file_path}: {e}")
                 if self.state_db:
@@ -149,12 +205,12 @@ class FeatureRepositoryWatcher:
             if self.state_db:
                 self.state_db.set_repo_indexing_status(self.repo_id, "INDEXING", current_file=path.name, progress_pct=50)
 
-            self.milvus_store.delete_by_file(str(path))
-            self.bm25_index.remove_by_file(str(path))
+            self.milvus_store.delete_by_file(p_resolved)
+            self.bm25_index.remove_by_file(p_resolved)
 
             if self.state_db:
                 try:
-                    self.state_db.delete_feature_file(self.repo_id, str(path))
+                    self.state_db.delete_feature_file(self.repo_id, p_resolved)
                     new_ver = self.state_db.increment_corpus_version(self.repo_id)
                     print(f"[Watcher] Deleted '{path.name}'. Repo '{self.repo_id}' corpus bumped to v{new_ver}.")
                 except Exception as se:
@@ -228,7 +284,7 @@ class InProcessWatchdogManager:
             "file_path": file_path,
             "repo_id": repo_id,
             "scenarios_count": scenarios_count,
-            "message": f"[{now_str}] ⚡ File {event_type}: {Path(file_path).name} (Repo: {repo_id}, {scenarios_count} scenarios re-indexed)",
+            "message": f"[{now_str}]   File {event_type}: {Path(file_path).name} (Repo: {repo_id}, {scenarios_count} scenarios re-indexed)",
         }
         with self._lock:
             self._events_log.insert(0, entry)
@@ -237,17 +293,34 @@ class InProcessWatchdogManager:
 
     def handle_file_change(self, file_path: str, event_type: str, repo_id: str = "default") -> None:
         path = Path(file_path)
+        p_resolved = str(path.resolve())
         print(f"[InProcessWatchdog] File event '{event_type}' on '{path.name}' (Repo: {repo_id})")
 
         scenarios_count = 0
         if event_type in ("created", "modified") and path.exists():
             try:
-                f_text = path.read_text(encoding="utf-8", errors="ignore")
+                # Retry loop to gracefully handle Windows in-flight file writes and locks
+                f_text = ""
+                for attempt in range(5):
+                    try:
+                        if not path.exists():
+                            return
+                        f_text = path.read_text(encoding="utf-8", errors="ignore")
+                        if f_text.strip():
+                            break
+                        time.sleep(0.1)
+                    except (PermissionError, IOError):
+                        time.sleep(0.15)
+
+                if not f_text.strip():
+                    print(f"[InProcessWatchdog] Warning: File '{path.name}' is empty or unreadable after write.")
+                    return
+
                 new_hash = fast_hash(f_text)
 
                 # Authoritative change check: skip if hash unchanged
                 if self.state_db:
-                    existing = self.state_db.get_feature_file(repo_id, str(path))
+                    existing = self.state_db.get_feature_file(repo_id, p_resolved)
                     if existing and existing.get("file_hash") == new_hash:
                         print(f"[InProcessWatchdog] File '{path.name}' hash unchanged. Index is up to date.")
                         return
@@ -255,23 +328,27 @@ class InProcessWatchdogManager:
                 if self.state_db:
                     self.state_db.set_repo_indexing_status(repo_id, "INDEXING", current_file=path.name, progress_pct=30)
 
-                self.milvus_store.delete_by_file(str(path))
-                self.bm25_index.remove_by_file(str(path))
+                self.milvus_store.delete_by_file(p_resolved)
+                self.bm25_index.remove_by_file(p_resolved)
 
-                scenarios = GherkinParser.parse_file(path, repo_id=repo_id)
+                scenarios = UniversalFileParser.parse_file(path, repo_id=repo_id)
                 if scenarios:
                     texts = [s.full_text for s in scenarios]
                     embeddings = self.embedding_model.encode(texts)
                     self.milvus_store.upsert(scenarios, embeddings)
 
-                    all_scenarios = [s for s in self.bm25_index.scenarios if s.file_path != str(path)] + scenarios
+                    # Update BM25 with clean deduplicated set
+                    all_scenarios = [
+                        s for s in self.bm25_index.scenarios
+                        if str(Path(s.file_path).resolve()) != p_resolved and s.file_path != str(path)
+                    ] + scenarios
                     self.bm25_index.index_scenarios(all_scenarios)
                     scenarios_count = len(scenarios)
 
                     if self.state_db:
                         try:
                             self.state_db.update_feature_file(
-                                file_path=str(path),
+                                file_path=p_resolved,
                                 repo_id=repo_id,
                                 file_hash=new_hash,
                                 scenario_count=scenarios_count,
@@ -294,12 +371,12 @@ class InProcessWatchdogManager:
             if self.state_db:
                 self.state_db.set_repo_indexing_status(repo_id, "INDEXING", current_file=path.name, progress_pct=50)
 
-            self.milvus_store.delete_by_file(str(path))
-            self.bm25_index.remove_by_file(str(path))
+            self.milvus_store.delete_by_file(p_resolved)
+            self.bm25_index.remove_by_file(p_resolved)
 
             if self.state_db:
                 try:
-                    self.state_db.delete_feature_file(repo_id, str(path))
+                    self.state_db.delete_feature_file(repo_id, p_resolved)
                     new_ver = self.state_db.increment_corpus_version(repo_id)
                     print(f"[InProcessWatchdog] Deleted '{path.name}'. Repo '{repo_id}' corpus bumped to v{new_ver}.")
                 except Exception as se:
@@ -318,7 +395,7 @@ class InProcessWatchdogManager:
         print("[InProcessWatchdog] Background watchdog engine started.")
 
     def add_watch_directory(self, folder_path: str or Path, repo_id: str = "default") -> bool:
-        """Dynamically registers and watches a new directory path."""
+        """Dynamically registers and watches a new directory path, syncing any unindexed files."""
         p = Path(folder_path).resolve()
         if not p.exists() or not p.is_dir():
             return False
@@ -337,8 +414,20 @@ class InProcessWatchdogManager:
             )
             watch = self.observer.schedule(handler, p_str, recursive=True)
             self._watched_paths[p_str] = {"repo_id": repo_id, "watch": watch}
-            print(f"[InProcessWatchdog] Watching new directory: '{p_str}' for repo '{repo_id}'")
-            return True
+            print(f"[InProcessWatchdog] Watching directory: '{p_str}' for repo '{repo_id}'")
+
+        # Initial sync for any existing/new files in the added directory
+        try:
+            for feat_file in p.rglob("*"):
+                if feat_file.is_file() and UniversalFileParser.is_indexable(feat_file):
+                    try:
+                        self.handle_file_change(str(feat_file), "created", repo_id=repo_id)
+                    except Exception as fe:
+                        print(f"[InProcessWatchdog] Notice syncing existing file {feat_file.name}: {fe}")
+        except Exception as e:
+            print(f"[InProcessWatchdog] Directory initial sync notice: {e}")
+
+        return True
 
     def remove_watch_directory(self, folder_path: str or Path) -> bool:
         """Stops watching a directory."""

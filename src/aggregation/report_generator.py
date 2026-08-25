@@ -36,7 +36,7 @@ class ReportGenerator:
     def generate_markdown(self, report: GlobalCoverageReport, output_file: Path) -> None:
         """Generates Markdown report conforming to Section 30."""
         lines = [
-            "# 📊 Business Requirement to Automation Coverage Report",
+            "#   Business Requirement to Automation Coverage Report",
             "",
             f"*Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
             "",
@@ -59,7 +59,7 @@ class ReportGenerator:
 
         for v in report.verdicts:
             status_icon = "🟢" if v.overall_classification == "FULLY_COVERED" else ("🟡" if v.overall_classification == "PARTIALLY_COVERED" else "🔴")
-            cached_tag = " *(⚡ Cached)*" if v.cached else ""
+            cached_tag = " *(  Cached)*" if v.cached else ""
 
             lines.extend([
                 f"### {status_icon} Requirement: {v.title}{cached_tag}",
@@ -172,7 +172,7 @@ class ReportGenerator:
 </head>
 <body>
   <div class="container">
-    <h1>📊 Requirement Test Coverage & Verification Report</h1>
+    <h1>  Requirement Test Coverage & Verification Report</h1>
     <div class="cards">
       <div class="card"><div>Total Requirements</div><div class="val">{report.total_requirements}</div></div>
       <div class="card"><div>Average Match</div><div class="val" style="color:#38bdf8;">{report.average_match_pct:.1f}%</div></div>

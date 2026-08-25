@@ -92,7 +92,7 @@ class MilvusConfig(BaseModel):
 
 class WatcherConfig(BaseModel):
     debounce_seconds: float = 1.5
-    file_patterns: List[str] = Field(default_factory=lambda: ["*.feature"])
+    file_patterns: List[str] = Field(default_factory=lambda: ["*.feature", "*.md", "*.txt", "*.json", "*.yaml", "*.yml", "*.csv", "*.pdf", "*.docx"])
 
 
 class AppConfig(BaseModel):

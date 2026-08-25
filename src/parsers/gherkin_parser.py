@@ -154,6 +154,7 @@ class GherkinParser:
 
         state = "INIT"
         pending_tags: List[str] = []
+        pending_comments: List[str] = []
         current_scenario_tags: List[str] = []
         current_scenario_name = ""
         current_scenario_type = "Scenario"
@@ -219,7 +220,16 @@ class GherkinParser:
         for line_idx, raw_line in enumerate(lines, start=1):
             line = raw_line.strip()
 
-            if not line or line.startswith("#"):
+            if not line:
+                continue
+
+            # Preserve comments attached to scenarios or features
+            if line.startswith("#"):
+                if state == "IN_SCENARIO":
+                    current_raw_lines.append(raw_line)
+                    current_steps.append(raw_line)
+                else:
+                    pending_comments.append(raw_line)
                 continue
 
             # Tag lines
@@ -257,6 +267,10 @@ class GherkinParser:
                 current_scenario_tags = list(pending_tags)
                 pending_tags = []
                 state = "IN_SCENARIO"
+                if pending_comments:
+                    current_raw_lines.extend(pending_comments)
+                    current_steps.extend(pending_comments)
+                    pending_comments = []
                 current_raw_lines.append(raw_line)
                 continue
 
@@ -312,3 +326,179 @@ class GherkinParser:
                 except Exception as e:
                     print(f"Warning: Failed parsing {feature_file}: {e}")
         return all_chunks
+
+
+class UniversalFileParser:
+    """Universal repository parser supporting .feature, .md, .txt, .json, .yaml, .csv, .docx, .pdf, etc."""
+
+    SUPPORTED_EXTENSIONS = {
+        ".feature", ".md", ".markdown", ".txt", ".text",
+        ".json", ".yaml", ".yml", ".csv", ".tsv",
+        ".pdf", ".docx", ".rst", ".xml", ".html"
+    }
+
+    IGNORED_EXTENSIONS = {
+        ".pyc", ".db", ".sqlite", ".sqlite3", ".tmp", ".swp",
+        ".lock", ".exe", ".dll", ".pyd", ".bin", ".tar", ".gz",
+        ".zip", ".7z", ".rar", ".iso", ".png", ".jpg", ".jpeg",
+        ".gif", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".eot"
+    }
+
+    @classmethod
+    def is_indexable(cls, path: str or Path) -> bool:
+        p = Path(path)
+        if p.name.startswith(".") or "__pycache__" in p.parts:
+            return False
+        ext = p.suffix.lower()
+        if ext in cls.IGNORED_EXTENSIONS:
+            return False
+        if ext in cls.SUPPORTED_EXTENSIONS or not ext:
+            return True
+        return True
+
+    @classmethod
+    def parse_file(cls, file_path: str or Path, repo_id: str = "default") -> List[ScenarioChunk]:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return []
+
+        suffix = path.suffix.lower()
+        if suffix == ".feature":
+            return GherkinParser.parse_file(path, repo_id=repo_id)
+
+        # Document loading for markdown, txt, json, yaml, csv, pdf, docx, etc.
+        try:
+            from src.parsers.document_loaders import DocumentLoaderFactory
+            raw_text = DocumentLoaderFactory.load_file(path)
+        except Exception:
+            try:
+                raw_text = path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                return []
+
+        if not raw_text or not raw_text.strip():
+            return []
+
+        # If Markdown, split into header sections
+        if suffix in (".md", ".markdown"):
+            return cls._parse_markdown(path, raw_text, repo_id=repo_id)
+
+        # For text, json, yaml, csv, pdf, docx, create semantic chunks
+        return cls._chunk_document(path, raw_text, repo_id=repo_id)
+
+    @classmethod
+    def _parse_markdown(cls, path: Path, raw_text: str, repo_id: str) -> List[ScenarioChunk]:
+        chunks = []
+        lines = raw_text.splitlines()
+        current_header = path.stem
+        current_lines = []
+        header_line = 1
+
+        def flush():
+            nonlocal current_header, current_lines, header_line
+            if current_lines:
+                body = "\n".join(current_lines).strip()
+                if body:
+                    canon = f"Document: {path.name}\nSection: {current_header}\n{body}"
+                    cid = fast_hash(f"{repo_id}#{str(path.resolve())}#{current_header}#{header_line}")[:16]
+                    chunks.append(ScenarioChunk(
+                        scenario_id=cid,
+                        repository_id=repo_id,
+                        file_path=str(path.resolve()),
+                        line_number=header_line,
+                        feature_name=path.stem,
+                        scenario_name=current_header,
+                        scenario_type="Markdown Spec",
+                        canonical_text=canon,
+                        raw_gherkin=body,
+                        full_text=canon,
+                        content_hash=fast_hash(canon),
+                    ))
+            current_lines = []
+
+        for l_idx, line in enumerate(lines, start=1):
+            if re.match(r"^#{1,4}\s+(.+)$", line.strip()):
+                flush()
+                current_header = re.sub(r"^#{1,4}\s+", "", line.strip())
+                header_line = l_idx
+            else:
+                current_lines.append(line)
+        flush()
+
+        if not chunks:
+            cid = fast_hash(f"{repo_id}#{str(path.resolve())}#1")[:16]
+            canon = f"Document: {path.name}\n{raw_text.strip()}"
+            chunks.append(ScenarioChunk(
+                scenario_id=cid,
+                repository_id=repo_id,
+                file_path=str(path.resolve()),
+                line_number=1,
+                feature_name=path.stem,
+                scenario_name=path.stem,
+                scenario_type="Markdown Spec",
+                canonical_text=canon,
+                raw_gherkin=raw_text.strip(),
+                full_text=canon,
+                content_hash=fast_hash(canon),
+            ))
+        return chunks
+
+    @classmethod
+    def _chunk_document(cls, path: Path, raw_text: str, repo_id: str) -> List[ScenarioChunk]:
+        chunks = []
+        paragraphs = [p.strip() for p in raw_text.split("\n\n") if p.strip()]
+        if not paragraphs:
+            paragraphs = [raw_text.strip()]
+
+        current_block = []
+        current_len = 0
+        part_num = 1
+
+        def flush_block():
+            nonlocal current_block, current_len, part_num
+            if current_block:
+                block_text = "\n\n".join(current_block)
+                sc_name = f"{path.name} (Part {part_num})" if part_num > 1 or len(paragraphs) > 1 else path.name
+                canon = f"Document: {path.name}\n{block_text}"
+                cid = fast_hash(f"{repo_id}#{str(path.resolve())}#{part_num}")[:16]
+                chunks.append(ScenarioChunk(
+                    scenario_id=cid,
+                    repository_id=repo_id,
+                    file_path=str(path.resolve()),
+                    line_number=1,
+                    feature_name=path.stem,
+                    scenario_name=sc_name,
+                    scenario_type="Document",
+                    canonical_text=canon,
+                    raw_gherkin=block_text,
+                    full_text=canon,
+                    content_hash=fast_hash(canon),
+                ))
+                part_num += 1
+                current_block = []
+                current_len = 0
+
+        for p in paragraphs:
+            if current_len + len(p) > 1200 and current_block:
+                flush_block()
+            current_block.append(p)
+            current_len += len(p)
+        flush_block()
+        return chunks
+
+    @classmethod
+    def parse_directory(cls, dir_path: str or Path, repo_id: str = "default", recursive: bool = True) -> List[ScenarioChunk]:
+        directory = Path(dir_path)
+        if not directory.exists():
+            return []
+
+        all_chunks: List[ScenarioChunk] = []
+        files = directory.rglob("*") if recursive else directory.glob("*")
+        for f in sorted(files):
+            if f.is_file() and cls.is_indexable(f):
+                try:
+                    all_chunks.extend(cls.parse_file(f, repo_id=repo_id))
+                except Exception as e:
+                    print(f"Warning: Failed parsing {f}: {e}")
+        return all_chunks
+

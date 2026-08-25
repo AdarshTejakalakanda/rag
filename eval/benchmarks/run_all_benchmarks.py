@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from src.pipeline import RAGCoveragePipeline
 from src.config import AppConfig
+from src.judge.judge_prompts import PROMPT_VERSION
 from eval.retrieval.evaluate_retrieval import RetrievalEvaluator
 from eval.judge.evaluate_judge import JudgeEvaluator
 
@@ -35,7 +36,7 @@ class BenchmarkRunner:
             "reranker_model": getattr(self.pipeline.reranker, "model_name", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
             "llm_provider": getattr(self.pipeline.config.judge, "provider", "gemini"),
             "llm_model": getattr(self.pipeline.config.judge, "model_name", "gemini-2.5-flash"),
-            "prompt_version": "judge-v2.0",
+            "prompt_version": PROMPT_VERSION,
             "retrieval_version": "hybrid-bm25-dense-rrf-v1.0",
             "corpus_version": corpus_ver,
             "cache_bypassed": bypass_cache,
@@ -50,7 +51,7 @@ class BenchmarkRunner:
     ) -> Dict[str, Any]:
         """Runs benchmarks for specified target ('retrieval', 'judge', 'all')."""
         print("\n=======================================================")
-        print("⚡ LOCAL RAG BDD AUTOMATION AGENT - BENCHMARK HARNESS ⚡")
+        print("  LOCAL RAG BDD AUTOMATION AGENT - BENCHMARK HARNESS  ")
         print("=======================================================\n")
 
         config_snapshot = self.get_config_snapshot(repo_id=repo_id, bypass_cache=bypass_cache)
@@ -74,10 +75,10 @@ class BenchmarkRunner:
             sample_features_dir = Path("sample_data/feature_repos")
             features_dir = eval_features_dir if eval_features_dir.exists() else sample_features_dir
             if features_dir.exists():
-                print(f"📦 Indexing feature repository ({features_dir}) for retrieval evaluation...")
+                print(f"  Indexing feature repository ({features_dir}) for retrieval evaluation...")
                 self.pipeline.index_features(feature_dir=features_dir, repo_id=repo_id)
 
-            print("🔍 Running Retrieval Evaluation (Recall@5, Recall@10, MRR, NDCG)...")
+            print("  Running Retrieval Evaluation (Recall@5, Recall@10, MRR, NDCG)...")
             r_eval = RetrievalEvaluator(retriever=self.pipeline.retriever)
             r_metrics = r_eval.evaluate(repo_id=repo_id)
             results["retrieval_metrics"] = r_metrics
@@ -88,7 +89,7 @@ class BenchmarkRunner:
 
         # 2. Judge Benchmark
         if target in ("judge", "all", "e2e"):
-            print("⚖️ Running LLM Judge Evaluation (Accuracy, Macro-F1, Confusion Matrix)...")
+            print("  Running LLM Judge Evaluation (Accuracy, Macro-F1, Confusion Matrix)...")
             j_eval = JudgeEvaluator(judge=self.pipeline.judge)
             j_metrics = j_eval.evaluate(bypass_cache=bypass_cache)
             results["judge_metrics"] = j_metrics
@@ -119,9 +120,9 @@ class BenchmarkRunner:
         jm = results.get("judge_metrics", {})
 
         md = [
-            f"# 📊 RAG Coverage Benchmark Report",
+            f"#   RAG Coverage Benchmark Report",
             f"**Execution Timestamp**: `{results['timestamp']}`\n",
-            f"## ⚙️ Pipeline Configuration Snapshot",
+            f"##   Pipeline Configuration Snapshot",
             f"| Parameter | Value |",
             f"|---|---|",
             f"| **Embedding Model** | `{cfg['embedding_model']}` |",
@@ -136,7 +137,7 @@ class BenchmarkRunner:
 
         if rm:
             md.extend([
-                "## 🔍 Retrieval Layer Metrics",
+                "##   Retrieval Layer Metrics",
                 f"- **Recall@5**: `{rm.get('recall_at_5', 0) * 100:.1f}%`",
                 f"- **Recall@10**: `{rm.get('recall_at_10', 0) * 100:.1f}%`",
                 f"- **MRR (Mean Reciprocal Rank)**: `{rm.get('mrr', 0):.4f}`",
@@ -147,7 +148,7 @@ class BenchmarkRunner:
 
         if jm:
             md.extend([
-                "## ⚖️ LLM Judge Layer Metrics",
+                "##   LLM Judge Layer Metrics",
                 f"- **Overall Accuracy**: `{jm.get('accuracy', 0) * 100:.1f}%`",
                 f"- **Macro-F1 Score**: `{jm.get('macro_f1', 0):.4f}`",
                 f"- **Mean Absolute Error (Match %)**: `{jm.get('mean_absolute_error_pct', 0):.1f}%`",

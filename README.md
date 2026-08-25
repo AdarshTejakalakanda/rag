@@ -1,4 +1,4 @@
-# 🔍 Local RAG Requirement & Test Coverage Engine
+#   Local RAG Requirement & Test Coverage Engine
 
 An automated, local Retrieval-Augmented Generation (RAG) system that evaluates whether Business Requirements are covered by automated Gherkin (`.feature`) test scenarios, with persistent **SQLite Session Management**.
 
@@ -42,7 +42,7 @@ flowchart TD
 
 ---
 
-## ⚡ Key Features
+##   Key Features
 
 1. **SQLite Session Management**:
    - Tracks evaluation session runs, metadata, start/finish timestamps, and KPIs.
@@ -124,4 +124,6 @@ python src/cli.py watch --features sample_data/feature_repos
 
 
 TO LAUNCH THE INTERACTIVE WEB UI 
+```bash
 coverage-agent serve --port 8000
+```

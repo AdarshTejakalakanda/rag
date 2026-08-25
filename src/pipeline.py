@@ -5,7 +5,7 @@ from typing import List, Tuple, Dict, Any, Optional
 import os
 
 from src.config import AppConfig, load_config
-from src.parsers.gherkin_parser import GherkinParser, ScenarioChunk
+from src.parsers.gherkin_parser import GherkinParser, UniversalFileParser, ScenarioChunk
 from src.parsers.requirement_parser import RequirementParser, RequirementChunk
 from src.parsers.document_loaders import DocumentLoaderFactory
 from src.index.embedding_model import EmbeddingModel
@@ -98,11 +98,15 @@ class RAGCoveragePipeline:
 
         self.state_db.set_repo_indexing_status(repo_id, "INDEXING", current_file="Scanning files...", progress_pct=10)
 
-        print(f"[Pipeline] Scanning Gherkin features in repository '{repo_id}' ({target_dir})")
+        print(f"[Pipeline] Scanning automation files in repository '{repo_id}' ({target_dir})")
 
-        feature_files = list(target_dir.rglob("*.feature")) if target_dir.exists() else []
+        feature_files = [
+            f for f in target_dir.rglob("*")
+            if f.is_file() and UniversalFileParser.is_indexable(f)
+        ] if target_dir.exists() else []
+
         if not feature_files:
-            print(f"[Pipeline] Warning: No .feature files found in {target_dir}")
+            print(f"[Pipeline] Warning: No indexable test or specification files found in {target_dir}")
             self.state_db.set_repo_indexing_status(repo_id, "READY", current_file="", progress_pct=100)
             return 0
 
@@ -118,11 +122,11 @@ class RAGCoveragePipeline:
                 files_to_update.append(fpath)
 
         if files_to_update or force_reindex:
-            print(f"[Pipeline] Indexing {len(files_to_update)} modified/new feature file(s) for repo '{repo_id}'...")
+            print(f"[Pipeline] Indexing {len(files_to_update)} modified/new file(s) for repo '{repo_id}'...")
             for idx, fpath in enumerate(files_to_update, start=1):
                 pct = int(10 + (idx / max(len(files_to_update), 1)) * 60)
                 self.state_db.set_repo_indexing_status(repo_id, "INDEXING", current_file=fpath.name, progress_pct=pct)
-                scenarios = GherkinParser.parse_file(fpath, repo_id=repo_id)
+                scenarios = UniversalFileParser.parse_file(fpath, repo_id=repo_id)
                 f_hash = StateDatabase.compute_file_hash(fpath)
                 mtime = str(fpath.stat().st_mtime)
                 self.state_db.update_feature_file(
@@ -184,7 +188,7 @@ class RAGCoveragePipeline:
             f_path = Path(f["folder_path"])
             if f_path.exists() and f_path.is_dir():
                 self.state_db.set_repo_indexing_status(repo_id, "INDEXING", current_file=f_path.name, progress_pct=int(20 + (idx / len(folders)) * 50))
-                scenarios = GherkinParser.parse_directory(f_path, repo_id=repo_id)
+                scenarios = UniversalFileParser.parse_directory(f_path, repo_id=repo_id)
                 self.state_db.update_folder_scenario_count(f["folder_id"], len(scenarios))
                 self.state_db.save_scenarios(scenarios)
                 all_repo_scenarios.extend(scenarios)
