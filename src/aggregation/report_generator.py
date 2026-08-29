@@ -195,7 +195,7 @@ class ReportGenerator:
         </div>
         <p style="margin-top:10px; color:#94a3b8; font-size:14px;">${{r.reasoning}}</p>
         ${{(r.coverage_map || []).filter(m => (m.covers || []).length).map(m => `<div style="font-size:13px; color:#cbd5e1; margin-top:6px;">🔗 ${{m.file_path || m.scenario_id}}: ${{(m.covers || []).join('; ')}}</div>`).join('')}}
-        ${{r.primary_citation ? `<div style="font-size:13px; color:#38bdf8; font-family:'Fira Code', monospace; margin-top:8px;">🎯 Strongest individual file: ${{r.primary_citation.file_path}} : ${{r.primary_citation.scenario_name}}</div>` : ''}}
+        ${{r.primary_citation ? `<div style="font-size:13px; color:#38bdf8; font-family:'Fira Code', monospace; margin-top:8px;">  Strongest individual file: ${{r.primary_citation.file_path}} : ${{r.primary_citation.scenario_name}}</div>` : ''}}
       `;
       c.appendChild(box);
     }});

@@ -31,28 +31,30 @@ class HybridRetriever:
         self.config = config or RetrievalConfig()
         self.state_db = state_db
 
-    def retrieve(
+    def retrieve_with_pool(
         self,
         query: str or RequirementChunk,
         repo_id: Optional[str] = None,
-    ) -> List[Tuple[ScenarioChunk, float, Dict[str, Any]]]:
+    ) -> Tuple[List[Tuple[ScenarioChunk, float, Dict[str, Any]]], Dict[str, Any]]:
         """
-        Executes hybrid retrieval:
-        1. BM25 Lexical Search (Top 20)
-        2. Milvus Dense Vector Search (Top 20) -> scenario_ids
-        3. Hydrates full ScenarioChunk (raw Gherkin + canonical text) from SQLite by scenario_id
-        4. Reciprocal Rank Fusion (RRF Top 20)
-        5. Cross-Encoder Re-ranking (Top 10)
+        Executes initial hybrid retrieval with expanded Top 50 pool:
+        1. BM25 Lexical Search (Top 50)
+        2. Milvus Dense Vector Search (Top 50) -> scenario_ids
+        3. Hydrates full ScenarioChunk (raw Gherkin + canonical text) from SQLite
+        4. Caches Top 50 BM25 + Dense pool for zero-query controlled retry
+        5. Balanced Reciprocal Rank Fusion (RRF Top 25)
+        6. Cross-Encoder Re-ranking (Top 10)
+        Returns: (top10_candidates, retrieval_pool)
         """
         if isinstance(query, RequirementChunk):
             query_text = query.full_text or f"{query.title}\n{query.description}"
         else:
             query_text = str(query)
 
-        # 1. BM25 Lexical Retrieval
+        # 1. BM25 Lexical Retrieval (Top 50)
         bm25_hits = self.bm25.search(query_text, top_k=self.config.bm25_top_k, repo_id=repo_id)
 
-        # 2. Dense Vector Retrieval
+        # 2. Dense Vector Retrieval (Top 50)
         q_vec = self.embedder.encode_query(query_text)
         milvus_hits = self.milvus.search(q_vec, top_k=self.config.dense_top_k, repo_id=repo_id)
 
@@ -80,15 +82,23 @@ class HybridRetriever:
                 )
             dense_hits.append((sc, score, rank))
 
-        # 4. Reciprocal Rank Fusion (RRF) -> Top 20 Candidates
+        retrieval_pool = {
+            "bm25_hits": bm25_hits,
+            "dense_hits": dense_hits,
+            "query_text": query_text,
+            "repo_id": repo_id,
+        }
+
+        # 4. Standard Balanced Reciprocal Rank Fusion (RRF) -> Top 25 Candidates
         fused_candidates = RRFFusion.fuse(
             rankings=[bm25_hits, dense_hits],
+            weights=[1.0, 1.0],
             k=self.config.rrf_k,
             top_n=self.config.rrf_top_k,
         )
 
         if not fused_candidates:
-            return []
+            return [], retrieval_pool
 
         # 5. Cross-Encoder Re-ranking -> Top 10 Precision Scenarios
         reranked_top10 = self.reranker.rerank(
@@ -97,4 +107,62 @@ class HybridRetriever:
             top_k=self.config.reranker_top_k,
         )
 
+        return reranked_top10, retrieval_pool
+
+    def retry_with_strategy(
+        self,
+        retrieval_pool: Dict[str, Any],
+        strategy: str = "LEXICAL_HEAVY",
+    ) -> List[Tuple[ScenarioChunk, float, Dict[str, Any]]]:
+        """
+        Executes one controlled retry using Weighted RRF over the already retrieved Top 50 lists.
+        Does NOT re-query Milvus or BM25, keeping execution extremely fast and lightweight.
+
+        Strategies:
+          • 'LEXICAL_HEAVY': weights=[2.0, 0.5] (prioritizes BM25 exact keyword matches)
+          • 'DENSE_HEAVY':   weights=[0.5, 2.0] (prioritizes Milvus semantic vector matches)
+          • 'NONE' / other:  weights=[1.0, 1.0] (balanced)
+        """
+        bm25_hits = retrieval_pool.get("bm25_hits", [])
+        dense_hits = retrieval_pool.get("dense_hits", [])
+        query_text = retrieval_pool.get("query_text", "")
+
+        if not bm25_hits and not dense_hits:
+            return []
+
+        strat_upper = (strategy or "").upper()
+        if strat_upper == "LEXICAL_HEAVY":
+            weights = list(self.config.lexical_heavy_weights)
+        elif strat_upper == "DENSE_HEAVY":
+            weights = list(self.config.dense_heavy_weights)
+        else:
+            weights = list(self.config.balanced_weights)
+
+        # Weighted RRF on existing Top 50 pools
+        fused_candidates = RRFFusion.fuse(
+            rankings=[bm25_hits, dense_hits],
+            weights=weights,
+            k=self.config.rrf_k,
+            top_n=self.config.rrf_top_k,
+        )
+
+        if not fused_candidates:
+            return []
+
+        # Cross-Encoder Reranking -> Top 10
+        reranked_top10 = self.reranker.rerank(
+            query=query_text,
+            candidates=fused_candidates,
+            top_k=self.config.reranker_top_k,
+        )
+
         return reranked_top10
+
+    def retrieve(
+        self,
+        query: str or RequirementChunk,
+        repo_id: Optional[str] = None,
+    ) -> List[Tuple[ScenarioChunk, float, Dict[str, Any]]]:
+        """Backward-compatible retrieval method returning top-10 candidates."""
+        candidates, _ = self.retrieve_with_pool(query=query, repo_id=repo_id)
+        return candidates

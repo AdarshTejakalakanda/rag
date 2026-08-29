@@ -45,12 +45,18 @@ class EmbeddingModel:
             )
             return embeddings[0] if is_single else np.array(embeddings, dtype=np.float32)
         else:
-            # Deterministic pseudo-embedding for testing/fallback
+            # Deterministic feature-hash projection for airgapped/test fallback
+            import hashlib, re
             dim = 384
             res = []
             for t in text_list:
-                np.random.seed(abs(hash(t)) % (2**32))
-                vec = np.random.randn(dim).astype(np.float32)
+                vec = np.zeros(dim, dtype=np.float32)
+                words = re.findall(r"\w+", (t or "").lower())
+                for w in words:
+                    h = int(hashlib.md5(w.encode("utf-8")).hexdigest(), 16)
+                    idx = h % dim
+                    sign = 1.0 if ((h >> 8) & 1) else -1.0
+                    vec[idx] += sign
                 norm = np.linalg.norm(vec)
                 if norm > 0:
                     vec /= norm

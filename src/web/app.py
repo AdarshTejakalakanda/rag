@@ -1061,7 +1061,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
         <!-- Right: Scenario Citations Sidebar -->
         <div class="citations-col">
-          <h3 style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 6px;">🎯 Scenario Citations</h3>
+          <h3 style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 6px;">  Scenario Citations</h3>
           <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Retrieved grounded Gherkin scenarios for the latest query.</p>
           <div id="citationsList"></div>
         </div>
@@ -1075,7 +1075,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <div id="scenarioModal" class="modal" onclick="if(event.target===this) closeScenarioModal()">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 id="modalTitle" style="font-size: 16px; color: #fff;">🎯 Scenario Details</h3>
+        <h3 id="modalTitle" style="font-size: 16px; color: #fff;">  Scenario Details</h3>
         <button class="modal-close" onclick="closeScenarioModal()">&times;</button>
       </div>
       <div class="modal-meta" id="modalMeta"></div>
@@ -1562,7 +1562,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             const fileName = getFileName(c.file_path);
             const pct = c.match_percentage !== undefined ? c.match_percentage : Math.round((c.score || 0) * 10);
             const pillColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
-            return `<span class="citation-pill" title="Click to view Gherkin steps" onclick="openScenarioModal('${c.scenario_id}')">🎯 <strong>${escapeHtml(c.scenario_name)}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${pillColor}; font-size: 10px; padding: 1px 5px; margin-left: 4px;">${pct}%</span></span>`;
+            return `<span class="citation-pill" title="Click to view Gherkin steps" onclick="openScenarioModal('${c.scenario_id}')">  <strong>${escapeHtml(c.scenario_name)}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${pillColor}; font-size: 10px; padding: 1px 5px; margin-left: 4px;">${pct}%</span></span>`;
           }).join('');
           citationPillsHtml = `<div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;">${pills}</div>`;
         }
@@ -1598,7 +1598,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             const fileName = getFileName(c.file_path);
             const pct = c.match_percentage !== undefined ? c.match_percentage : 0;
             const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
-            pill.innerHTML = `🎯 <strong>${c.scenario_name}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 10px; margin-left: 4px;">${pct}%</span>`;
+            pill.innerHTML = `  <strong>${c.scenario_name}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 10px; margin-left: 4px;">${pct}%</span>`;
             pill.onclick = () => openScenarioModal(c.scenario_id);
             p.appendChild(pill);
           });
@@ -1626,7 +1626,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
         card.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
-            <div class="title" style="flex: 1;">🎯 ${c.scenario_name}</div>
+            <div class="title" style="flex: 1;">  ${c.scenario_name}</div>
             <span class="badge" style="background: rgba(255,255,255,0.06); color: ${badgeColor}; font-size: 11px;">${pct}%</span>
           </div>
           <div class="meta" style="margin-top: 6px;">Feature: ${c.feature_title}</div>
@@ -1648,7 +1648,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         }
         const data = await res.json();
         const sc = data.scenario;
-        document.getElementById('modalTitle').textContent = `🎯 ${sc.scenario_name}`;
+        document.getElementById('modalTitle').textContent = `  ${sc.scenario_name}`;
         const fileName = getFileName(sc.file_path);
         const featName = sc.feature_name || sc.feature_title || 'Feature';
         document.getElementById('modalMeta').innerHTML = `

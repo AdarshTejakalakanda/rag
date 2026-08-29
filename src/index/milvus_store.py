@@ -238,7 +238,7 @@ class MilvusStore:
         q_vec = query_vector / (np.linalg.norm(query_vector) + 1e-9)
         scored = []
 
-        for s_id, record in self._local_fallback_store.items():
+        for s_id, record in list(self._local_fallback_store.items()):
             if repo_id and record.get("repo_id") != repo_id:
                 continue
 
@@ -275,12 +275,12 @@ class MilvusStore:
             except Exception:
                 pass
         to_del = [
-            s_id for s_id, rec in self._local_fallback_store.items()
+            s_id for s_id, rec in list(self._local_fallback_store.items())
             if str(Path(rec.get("file_path", "")).resolve()).replace("\\", "/") == target_norm
             or str(rec.get("file_path", "")).replace("\\", "/") == target_raw
         ]
         for s_id in to_del:
-            del self._local_fallback_store[s_id]
+            self._local_fallback_store.pop(s_id, None)
         if to_del:
             self._save_cache()
 
@@ -293,9 +293,9 @@ class MilvusStore:
                 self.collection.flush()
             except Exception:
                 pass
-        to_del = [s_id for s_id, rec in self._local_fallback_store.items() if rec.get("repo_id") == repo_id]
+        to_del = [s_id for s_id, rec in list(self._local_fallback_store.items()) if rec.get("repo_id") == repo_id]
         for s_id in to_del:
-            del self._local_fallback_store[s_id]
+            self._local_fallback_store.pop(s_id, None)
         if to_del:
             self._save_cache()
 
@@ -309,5 +309,5 @@ class MilvusStore:
             except Exception:
                 pass
         if repo_id:
-            return sum(1 for r in self._local_fallback_store.values() if r.get("repo_id") == repo_id)
+            return sum(1 for r in list(self._local_fallback_store.values()) if r.get("repo_id") == repo_id)
         return len(self._local_fallback_store)
