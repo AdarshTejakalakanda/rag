@@ -397,7 +397,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <title>Local RAG BDD Test Automation Agent</title>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
   <!-- Lucide Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js" crossorigin="anonymous"></script>
   <style>
     :root {
       --bg: #0b1120;
@@ -1386,7 +1386,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <h3 id="modalTitle" style="font-size: 16px; color: #fff; display: flex; align-items: center; gap: 8px;">
           <i data-lucide="file-code" style="width: 18px; height: 18px; color: var(--accent);"></i> Scenario Details
         </h3>
-        <button class="modal-close" onclick="closeScenarioModal()"><i data-lucide="x" style="width: 18px; height: 18px;"></i></button>
+        <button class="modal-close" aria-label="Close scenario details" onclick="closeScenarioModal()"><i data-lucide="x" style="width: 18px; height: 18px;"></i></button>
       </div>
       <div class="modal-meta" id="modalMeta"></div>
       <div class="gherkin-viewer" id="modalGherkin"></div>
@@ -1406,7 +1406,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11.5px;" onclick="copyReportModalContent()"><i data-lucide="copy" style="width: 12px; height: 12px;"></i> Copy Report</button>
-          <button class="modal-close" onclick="closeReportModal()"><i data-lucide="x" style="width: 18px; height: 18px;"></i></button>
+          <button class="modal-close" aria-label="Close report" onclick="closeReportModal()"><i data-lucide="x" style="width: 18px; height: 18px;"></i></button>
         </div>
       </div>
       <div id="reportModalBody" style="margin-top: 16px; max-height: 70vh; overflow-y: auto; line-height: 1.7; font-size: 13.5px; color: #e2e8f0;"></div>
@@ -1740,7 +1740,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             <div class="session-title">${escapeHtml(s.title || 'Conversation')}</div>
             <div class="session-time">${String(s.updated_at || s.created_at).slice(0, 16)}</div>
           </div>
-          <button class="btn btn-danger" style="padding: 2px 6px; font-size: 10px;" onclick="event.stopPropagation(); deleteChatSession('${s.chat_id}')"><i data-lucide="trash-2" style="width: 10px; height: 10px;"></i></button>
+          <button class="btn btn-danger" aria-label="Delete chat session" style="padding: 2px 6px; font-size: 10px;" onclick="event.stopPropagation(); deleteChatSession('${s.chat_id}')"><i data-lucide="trash-2" style="width: 10px; height: 10px;"></i></button>
         `;
         list.appendChild(div);
       });
@@ -1826,6 +1826,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     let liveThinkingStart = 0;
 
     function showLiveAgentThinking() {
+      removeLiveAgentThinking();
       const box = document.getElementById('chatMessages');
       const div = document.createElement('div');
       div.id = 'liveAgentThinkingBox';

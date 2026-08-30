@@ -628,17 +628,18 @@ class LLMJudge:
 
         evals = data.get("evaluations", [])
         overall_summary = data.get("overall_summary", {}) or {}
-        rs_data = data.get("retrieval_sufficiency") or {}
+        rs_raw = data.get("retrieval_sufficiency")
+        rs_data = rs_raw if isinstance(rs_raw, dict) else {}
 
-        retrieval_decision = (rs_data.get("decision") or "SUFFICIENT_EVIDENCE").strip().upper()
+        retrieval_decision = str(rs_data.get("decision") or "SUFFICIENT_EVIDENCE").strip().upper()
         if retrieval_decision not in ("SUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE"):
             retrieval_decision = "SUFFICIENT_EVIDENCE"
 
-        retry_strategy = (rs_data.get("retry_strategy") or "NONE").strip().upper()
+        retry_strategy = str(rs_data.get("retry_strategy") or "NONE").strip().upper()
         if retry_strategy not in ("NONE", "LEXICAL_HEAVY", "DENSE_HEAVY"):
             retry_strategy = "NONE"
 
-        retry_reason = rs_data.get("reason", "").strip()
+        retry_reason = str(rs_data.get("reason") or "").strip()
 
         eval_map = {(e.get("scenario_id") or e.get("document_id")): e for e in evals if isinstance(e, dict)}
 

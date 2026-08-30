@@ -133,6 +133,7 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
 
         # Check dense vector semantic cache
         candidate_ids = [sc.scenario_id for sc, _, _ in candidates]
+        initial_candidate_ids = list(candidate_ids)
         cached_hit = False
         query_embedding = None
         try:
@@ -174,11 +175,19 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
             )
             dur_call1 = int((time.time() - t_call1) * 1000)
 
-            # Check if reply indicates insufficient evidence / missing keywords
+            # Check if reply indicates complete gap or insufficient evidence
             reply_lower = (reply_text or "").lower()
             needs_retry = False
 
-            if ("no automated" in reply_lower or "not found" in reply_lower or "insufficient" in reply_lower) and len(candidates) > 0:
+            no_coverage_signals = (
+                "no automated" in reply_lower
+                or "not covered / gap (0%)" in reply_lower
+                or "coverage: not covered" in reply_lower
+                or "insufficient evidence" in reply_lower
+                or "no matching test" in reply_lower
+            )
+
+            if no_coverage_signals and len(candidates) > 0:
                 needs_retry = True
                 retry_strategy = "LEXICAL_HEAVY"
                 retry_reason = "Initial candidates lacked specific keyword/action step matches."
@@ -246,10 +255,10 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
                 else:
                     reply_text = f"No automated Gherkin scenarios were found matching your inquiry in repository '{repo_id}'."
 
-            # Store in dense vector semantic cache
+            # Store in dense vector semantic cache under the initial candidate fingerprint
             self.state_db.store_cached_judgment(
                 requirement_text=user_message,
-                candidate_ids=[sc.scenario_id for sc, _, _ in candidates],
+                candidate_ids=initial_candidate_ids,
                 provider=self.llm_client.provider,
                 judgment={"reply": reply_text},
                 repo_id=repo_id,
