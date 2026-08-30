@@ -4,7 +4,7 @@ Supports YAML configuration and environment variable overrides via .env.
 """
 
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import os
 import yaml
 import logging
@@ -46,11 +46,14 @@ class ModelsConfig(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    bm25_top_k: int = 20
-    dense_top_k: int = 20
+    bm25_top_k: int = 50
+    dense_top_k: int = 50
     rrf_k: int = 60
-    rrf_top_k: int = 20
+    rrf_top_k: int = 25
     reranker_top_k: int = 10
+    lexical_heavy_weights: Tuple[float, float] = (2.0, 0.5)
+    dense_heavy_weights: Tuple[float, float] = (0.5, 2.0)
+    balanced_weights: Tuple[float, float] = (1.0, 1.0)
 
 
 class BM25Config(BaseModel):

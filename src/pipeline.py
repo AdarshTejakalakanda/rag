@@ -264,11 +264,17 @@ class RAGCoveragePipeline:
         for idx, req in enumerate(requirements, start=1):
             print(f"[{idx}/{len(requirements)}] Retrieving & judging coverage for [{req.req_id}] {req.title[:45]}...")
             
-            # Hybrid Retrieval -> RRF (Top 20) -> Cross-Encoder (Top 10) scoped to repo_id
-            top10_candidates = self.retriever.retrieve(req, repo_id=repo_id)
+            # Hybrid Retrieval -> Top 50 BM25 + Top 50 Dense -> RRF -> Cross-Encoder (Top 10)
+            top10_candidates, retrieval_pool = self.retriever.retrieve_with_pool(req, repo_id=repo_id)
 
-            # Semantic Cache check & ONE LLM Judge Call
-            verdict = self.judge.judge_requirement(requirement=req, candidates=top10_candidates, repo_id=repo_id)
+            # Agentic Retrieval Sufficiency Check & ONE Controlled Retry (if needed)
+            verdict = self.judge.judge_requirement(
+                requirement=req,
+                candidates=top10_candidates,
+                repo_id=repo_id,
+                retrieval_pool=retrieval_pool,
+                retriever=self.retriever,
+            )
             verdicts.append(verdict)
 
             # Record in SQLite `evaluations` table

@@ -174,7 +174,7 @@ def handle_chat(args):
             if res.get("citations"):
                 console.print("[dim]Grounded Scenario Citations:[/dim]")
                 for c in res["citations"][:3]:
-                    console.print(f"  🎯 [green]{c['feature_title']}[/green] ➔ [bold white]{c['scenario_name']}[/bold white] ({Path(c['file_path']).name}:{c['line_number']})")
+                    console.print(f"    [green]{c['feature_title']}[/green] ➔ [bold white]{c['scenario_name']}[/bold white] ({Path(c['file_path']).name}:{c['line_number']})")
                 console.print("")
         except (KeyboardInterrupt, EOFError):
             break

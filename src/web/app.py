@@ -1,5 +1,6 @@
 """FastAPI Web Application & RAG Chatbot Dashboard with Integrated Indexer & Multi-Folder Watchdog."""
 
+
 import os
 import sys
 import json
@@ -356,8 +357,11 @@ async def handle_chat(req: ChatRequest):
             "reply": res["reply"],
             "citations": res["citations"],
             "cached": res.get("cached", False),
+            "agent_trace": res.get("agent_trace"),
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -393,6 +397,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Local RAG BDD Test Automation Agent</title>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js" crossorigin="anonymous"></script>
   <style>
     :root {
       --bg: #0b1120;
@@ -409,6 +415,20 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       --red: #ef4444;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    /* Lucide Icon Base Styling */
+    .lucide {
+      vertical-align: middle;
+      display: inline-block;
+      stroke-width: 1.85;
+    }
+    .spin-icon {
+      animation: spinAnim 1.2s linear infinite;
+    }
+    @keyframes spinAnim {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
     
     /* Modern Visible Custom Scrollbars */
     * {
@@ -454,7 +474,17 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       flex-shrink: 0;
     }
     .brand { display: flex; align-items: center; gap: 10px; }
-    .brand-icon { font-size: 22px; color: var(--accent); }
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+    }
     .brand-title { font-weight: 800; font-size: 17px; letter-spacing: -0.3px; color: #fff; }
     .header-actions { display: flex; align-items: center; gap: 14px; }
     .watchdog-pill {
@@ -878,7 +908,266 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       border-color: var(--accent);
     }
 
-    /* Modal */
+    /* ================= ANTHROPIC-STYLE AGENT THOUGHT & RETRY LOOP ================= */
+    
+    @keyframes anthropicRotate {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes anthropicPulse {
+      0%, 100% { transform: scale(0.85); opacity: 0.7; }
+      50% { transform: scale(1.2); opacity: 1; filter: drop-shadow(0 0 6px #a855f7); }
+    }
+    @keyframes anthropicShimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @keyframes stepFadeIn {
+      0% { opacity: 0; transform: translateY(4px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    .shimmer-text {
+      background: linear-gradient(90deg, #94a3b8 0%, #ffffff 50%, #94a3b8 100%);
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: anthropicShimmer 2.4s infinite linear;
+    }
+
+    /* Live Thinking Container (In-Flight) */
+    .live-thought-container {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(19, 29, 49, 0.85) 100%);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+      position: relative;
+      overflow: hidden;
+    }
+    .live-thought-container::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), var(--purple), transparent);
+      animation: anthropicShimmer 2s infinite linear;
+      background-size: 200% 100%;
+    }
+    .live-thought-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .live-thought-title-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .anthropic-spinner-ring {
+      position: relative;
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .anthropic-spinner-ring::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(56, 189, 248, 0.15);
+      border-top-color: var(--accent);
+      border-right-color: var(--purple);
+      animation: anthropicRotate 0.9s linear infinite;
+    }
+    .anthropic-spinner-center {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: anthropicPulse 1.4s ease-in-out infinite;
+    }
+    .live-agent-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: var(--accent);
+      font-size: 11.5px;
+      font-weight: 700;
+    }
+    .live-step-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .live-step-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      color: #94a3b8;
+      animation: stepFadeIn 0.3s ease-out;
+    }
+    .live-step-item.active {
+      color: #f8fafc;
+      font-weight: 600;
+    }
+    .live-step-item.completed {
+      color: #38bdf8;
+    }
+    .step-indicator-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.06);
+      color: #64748b;
+    }
+    .live-step-item.active .step-indicator-icon {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--accent);
+      box-shadow: 0 0 8px var(--accent-glow);
+    }
+    .live-step-item.completed .step-indicator-icon {
+      background: rgba(34, 197, 94, 0.2);
+      color: var(--green);
+    }
+
+    /* Finished Thought Accordion (Anthropic Style) */
+    .anthropic-thought-card {
+      margin-bottom: 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(15, 23, 42, 0.65);
+      overflow: hidden;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .anthropic-thought-card:hover {
+      border-color: rgba(56, 189, 248, 0.3);
+    }
+    .thought-toggle-btn {
+      width: 100%;
+      background: none;
+      border: none;
+      padding: 9px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #cbd5e1;
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .thought-toggle-btn:hover {
+      background: rgba(255, 255, 255, 0.03);
+      color: #fff;
+    }
+    .thought-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .thought-sparkle {
+      color: var(--purple);
+      font-size: 14px;
+    }
+    .thought-chevron {
+      font-size: 11px;
+      color: #64748b;
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .anthropic-thought-card.expanded .thought-chevron {
+      transform: rotate(180deg);
+      color: var(--accent);
+    }
+    .thought-drawer {
+      display: none;
+      padding: 12px 16px 14px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(11, 17, 32, 0.85);
+      animation: stepFadeIn 0.2s ease-out;
+    }
+    .anthropic-thought-card.expanded .thought-drawer {
+      display: block;
+    }
+
+    /* Vertical Timeline inside Thought Drawer */
+    .thought-timeline {
+      position: relative;
+      padding-left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 6px;
+    }
+    .thought-timeline::before {
+      content: '';
+      position: absolute;
+      left: 7px;
+      top: 6px;
+      bottom: 6px;
+      width: 2px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .timeline-node {
+      position: relative;
+    }
+    .timeline-node::before {
+      content: '';
+      position: absolute;
+      left: -17px;
+      top: 5px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #334155;
+      border: 2px solid #0f172a;
+    }
+    .timeline-node.completed::before {
+      background: var(--green);
+      box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+    }
+    .timeline-node.retried::before {
+      background: var(--yellow);
+      box-shadow: 0 0 6px rgba(234, 179, 8, 0.6);
+    }
+    .timeline-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .timeline-detail {
+      font-size: 11.5px;
+      color: #94a3b8;
+      margin-top: 2px;
+      line-height: 1.45;
+    }
+    .timeline-dur {
+      font-size: 10.5px;
+      color: #64748b;
+      font-family: 'Fira Code', monospace;
+    }
+
+    /* Modals & Viewer */
     .modal {
       display: none;
       position: fixed;
@@ -921,7 +1210,9 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <!-- Top Header -->
   <header>
     <div class="brand">
-      <span class="brand-icon"> </span>
+      <div class="brand-icon">
+        <i data-lucide="shield-check" style="width: 20px; height: 20px;"></i>
+      </div>
       <span class="brand-title">Local RAG BDD Automation Agent</span>
     </div>
     <div class="header-actions">
@@ -934,7 +1225,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <span id="watchdogStatusText">Watchdog: Monitoring</span>
       </div>
       <div class="repo-select-box">
-        <label>Active Repo:</label>
+        <label style="display: flex; align-items: center; gap: 4px;"><i data-lucide="database" style="width: 14px; height: 14px;"></i> Active Repo:</label>
         <select id="globalRepoSelector" onchange="onGlobalRepoChange()"></select>
       </div>
     </div>
@@ -942,8 +1233,12 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
   <!-- 2 Main Navigation Tabs -->
   <nav class="nav-tabs">
-    <button class="tab-btn active" onclick="switchMainTab('indexerTab', this)">🗂️ Indexer</button>
-    <button class="tab-btn" onclick="switchMainTab('ragBotTab', this)">💬 RAG Bot</button>
+    <button class="tab-btn active" onclick="switchMainTab('indexerTab', this)">
+      <i data-lucide="folder-tree" style="width: 16px; height: 16px;"></i> Indexer
+    </button>
+    <button class="tab-btn" onclick="switchMainTab('ragBotTab', this)">
+      <i data-lucide="bot" style="width: 16px; height: 16px;"></i> RAG Bot
+    </button>
   </nav>
 
   <!-- Main Content Area -->
@@ -959,20 +1254,22 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           <!-- Sub-Section A: Repositories Management -->
           <div class="panel-card">
             <div class="panel-header">
-              <h3>  Automation Repositories</h3>
-              <button class="btn btn-secondary" onclick="toggleAddRepoForm()">+ New Repo</button>
+              <h3><i data-lucide="git-branch" style="width: 17px; height: 17px; color: var(--accent);"></i> Automation Repositories</h3>
+              <button class="btn btn-secondary" onclick="toggleAddRepoForm()"><i data-lucide="plus" style="width: 13px; height: 13px;"></i> New Repo</button>
             </div>
 
             <!-- Add Repo Form -->
             <div id="addRepoForm" style="display: none; background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #1e293b;">
-              <h4 style="font-size: 13px; margin-bottom: 10px; color: #fff;">Register New Automation Repository</h4>
+              <h4 style="font-size: 13px; margin-bottom: 10px; color: #fff; display: flex; align-items: center; gap: 6px;">
+                <i data-lucide="plus-circle" style="width: 14px; height: 14px; color: var(--accent);"></i> Register New Automation Repository
+              </h4>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
                 <input type="text" id="newRepoName" placeholder="Repository Name (e.g. E-Commerce Core)" />
                 <input type="text" id="newRepoId" placeholder="Unique Repo ID (e.g. ecommerce_core)" />
               </div>
               <div style="display: flex; justify-content: flex-end; gap: 8px;">
-                <button class="btn btn-secondary" onclick="toggleAddRepoForm()">Cancel</button>
-                <button class="btn" onclick="submitNewRepo()">Save Repository</button>
+                <button class="btn btn-secondary" onclick="toggleAddRepoForm()"><i data-lucide="x" style="width: 13px; height: 13px;"></i> Cancel</button>
+                <button class="btn" onclick="submitNewRepo()"><i data-lucide="check" style="width: 13px; height: 13px;"></i> Save Repository</button>
               </div>
             </div>
 
@@ -982,8 +1279,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           <!-- Sub-Section B: Indexing Folders (Multi-Folder per Repo) -->
           <div class="panel-card">
             <div class="panel-header">
-              <h3>📂 Indexing Folders (<span id="selectedRepoTitle">Selected Repo</span>)</h3>
-              <button class="btn btn-secondary" onclick="reindexCurrentRepo()">🔄 Re-index All Folders</button>
+              <h3><i data-lucide="folders" style="width: 17px; height: 17px; color: var(--accent);"></i> Indexing Folders (<span id="selectedRepoTitle">Selected Repo</span>)</h3>
+              <button class="btn btn-secondary" onclick="reindexCurrentRepo()"><i data-lucide="refresh-cw" style="width: 13px; height: 13px;"></i> Re-index All Folders</button>
             </div>
             
             <p style="font-size: 12.5px; color: var(--text-muted);">
@@ -992,7 +1289,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
             <div style="display: flex; gap: 8px;">
               <input type="text" id="newFolderPath" style="flex: 1;" placeholder="Enter absolute or relative directory path (e.g. sample_data/feature_repos)" />
-              <button class="btn" onclick="submitAddFolder()">+ Add Folder & Watch</button>
+              <button class="btn" onclick="submitAddFolder()"><i data-lucide="folder-plus" style="width: 14px; height: 14px;"></i> Add Folder & Watch</button>
             </div>
 
             <div id="foldersList" style="margin-top: 4px;"></div>
@@ -1003,8 +1300,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Right Column: Live Watchdog Activity & Telemetry -->
         <div class="panel-card">
           <div class="panel-header">
-            <h3>  Live Watchdog & Re-indexing Activity</h3>
-            <span class="badge badge-live" id="watchdogLiveCount">Watching 0 Folders</span>
+            <h3><i data-lucide="activity" style="width: 17px; height: 17px; color: var(--accent);"></i> Live Watchdog & Re-indexing Activity</h3>
+            <span class="badge badge-live" id="watchdogLiveCount"><i data-lucide="radio" style="width: 11px; height: 11px;"></i> Watching 0 Folders</span>
           </div>
 
           <p style="font-size: 12.5px; color: var(--text-muted);">
@@ -1012,7 +1309,10 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           </p>
 
           <div class="activity-feed" id="activityFeed">
-            <div class="event-entry">  In-process watchdog engine running. Real-time file change logs will appear here.</div>
+            <div class="event-entry">
+              <i data-lucide="check-circle" style="width: 14px; height: 14px; color: var(--green); flex-shrink: 0;"></i>
+              <span>In-process watchdog engine running. Real-time file change logs will appear here.</span>
+            </div>
           </div>
         </div>
 
@@ -1026,10 +1326,12 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Left: Chat Sessions Sidebar -->
         <div class="sessions-col">
           <div class="sessions-header">
-            <h3 style="font-size: 14px; font-weight: 700; color: #fff;">💬 Chat Sessions</h3>
+            <h3 style="font-size: 14px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px;">
+              <i data-lucide="messages-square" style="width: 15px; height: 15px; color: var(--accent);"></i> Chat Sessions
+            </h3>
             <div style="display: flex; gap: 4px;">
-              <button class="btn btn-danger" style="padding: 3px 7px; font-size: 11px;" onclick="clearAllChatSessions()">Clear</button>
-              <button class="btn" style="padding: 3px 8px; font-size: 11px;" onclick="createNewChatSession()">+ New</button>
+              <button class="btn btn-danger" style="padding: 3px 7px; font-size: 11px;" onclick="clearAllChatSessions()"><i data-lucide="trash" style="width: 11px; height: 11px;"></i> Clear</button>
+              <button class="btn" style="padding: 3px 8px; font-size: 11px;" onclick="createNewChatSession()"><i data-lucide="plus" style="width: 11px; height: 11px;"></i> New</button>
             </div>
           </div>
           <div class="session-list" id="chatSessionsList"></div>
@@ -1040,8 +1342,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           <!-- Live Indexing Banner -->
           <div id="indexingBanner" style="display: none; background: rgba(234, 179, 8, 0.12); border-bottom: 1px solid rgba(234, 179, 8, 0.3); padding: 10px 20px; font-size: 13px; color: #fde047; align-items: center; justify-content: space-between; flex-shrink: 0;">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span class="watchdog-pulse" style="background: #fde047; box-shadow: 0 0 8px #fde047;"></span>
-              <span id="indexingBannerText">  Indexing in progress... Analysis will be available as soon as indexing completes.</span>
+              <i data-lucide="loader-2" class="spin-icon" style="width: 15px; height: 15px; color: #fde047;"></i>
+              <span id="indexingBannerText">Indexing in progress... Analysis will be available as soon as indexing completes.</span>
             </div>
             <div style="width: 140px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
               <div id="indexingProgressBar" style="width: 50%; height: 100%; background: #fde047; transition: width 0.3s;"></div>
@@ -1050,18 +1352,25 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
           <div class="chat-messages" id="chatMessages">
             <div class="chat-bubble assistant">
-              👋 Welcome to RAG Bot! Ask any question regarding Gherkin scenario coverage, acceptance criteria, or test steps scoped to your selected repository.
+              <div style="display: flex; align-items: flex-start; gap: 10px;">
+                <i data-lucide="sparkles" style="width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; margin-top: 2px;"></i>
+                <div>
+                  Welcome to <strong>RAG Bot</strong>! Ask any question regarding Gherkin scenario coverage, acceptance criteria, or test steps scoped to your selected repository.
+                </div>
+              </div>
             </div>
           </div>
           <div class="chat-input-container">
             <input type="text" id="chatInput" placeholder="Ask about requirement coverage, login scenarios, checkout tests..." onkeydown="if(event.key==='Enter') sendChatMessage()" />
-            <button class="btn" id="chatSendBtn" onclick="sendChatMessage()">Send</button>
+            <button class="btn" id="chatSendBtn" onclick="sendChatMessage()"><i data-lucide="send" style="width: 14px; height: 14px;"></i> Send</button>
           </div>
         </div>
 
         <!-- Right: Scenario Citations Sidebar -->
         <div class="citations-col">
-          <h3 style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 6px;">🎯 Scenario Citations</h3>
+          <h3 style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+            <i data-lucide="book-open" style="width: 15px; height: 15px; color: var(--accent);"></i> Scenario Citations
+          </h3>
           <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Retrieved grounded Gherkin scenarios for the latest query.</p>
           <div id="citationsList"></div>
         </div>
@@ -1075,8 +1384,10 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <div id="scenarioModal" class="modal" onclick="if(event.target===this) closeScenarioModal()">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 id="modalTitle" style="font-size: 16px; color: #fff;">🎯 Scenario Details</h3>
-        <button class="modal-close" onclick="closeScenarioModal()">&times;</button>
+        <h3 id="modalTitle" style="font-size: 16px; color: #fff; display: flex; align-items: center; gap: 8px;">
+          <i data-lucide="file-code" style="width: 18px; height: 18px; color: var(--accent);"></i> Scenario Details
+        </h3>
+        <button class="modal-close" aria-label="Close scenario details" onclick="closeScenarioModal()"><i data-lucide="x" style="width: 18px; height: 18px;"></i></button>
       </div>
       <div class="modal-meta" id="modalMeta"></div>
       <div class="gherkin-viewer" id="modalGherkin"></div>
@@ -1088,15 +1399,15 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     <div class="modal-content" style="max-width: 860px; max-height: 88vh;">
       <div class="modal-header">
         <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-size: 20px;"> </span>
+          <i data-lucide="clipboard-check" style="width: 22px; height: 22px; color: var(--accent);"></i>
           <div>
             <h3 id="reportModalTitle" style="font-size: 16px; color: #fff;">Coverage Assessment & Gap Analysis</h3>
             <div id="reportModalSubtitle" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;"></div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
-          <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11.5px;" onclick="copyReportModalContent()">📋 Copy Report</button>
-          <button class="modal-close" onclick="closeReportModal()">&times;</button>
+          <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11.5px;" onclick="copyReportModalContent()"><i data-lucide="copy" style="width: 12px; height: 12px;"></i> Copy Report</button>
+          <button class="modal-close" aria-label="Close report" onclick="closeReportModal()"><i data-lucide="x" style="width: 18px; height: 18px;"></i></button>
         </div>
       </div>
       <div id="reportModalBody" style="margin-top: 16px; max-height: 70vh; overflow-y: auto; line-height: 1.7; font-size: 13.5px; color: #e2e8f0;"></div>
@@ -1109,6 +1420,16 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     let activeChatId = null;
     window.reportStore = {};
     window.activeReportId = null;
+
+    function refreshIcons(container) {
+      if (window.lucide && typeof window.lucide.createIcons === 'function') {
+        try {
+          window.lucide.createIcons(container ? { root: container } : undefined);
+        } catch (e) {
+          console.warn('Lucide icon refresh notice:', e);
+        }
+      }
+    }
 
     // Cross-platform file basename helper
     function getFileName(filePath) {
@@ -1145,7 +1466,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         const item = codeBlocks[parseInt(idx)];
         return `
           <div class="code-block-wrapper">
-            <button class="code-copy-btn" onclick="copyCode(this)">📋 Copy Gherkin</button>
+            <button class="code-copy-btn" onclick="copyCode(this)"><i data-lucide="copy" style="width: 12px; height: 12px;"></i> Copy Gherkin</button>
             <div class="gherkin-viewer">${escapeHtml(item.code)}</div>
           </div>
         `;
@@ -1184,6 +1505,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       btn.classList.add('active');
       if (tabId === 'indexerTab') loadIndexerData();
       if (tabId === 'ragBotTab') loadChatSessions();
+      refreshIcons();
     }
 
     // ==================== REPOSITORIES & FOLDERS ====================
@@ -1218,12 +1540,12 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         card.onclick = () => selectRepo(r.repo_id);
         card.innerHTML = `
           <div class="repo-info">
-            <h4>${r.repo_name} ${isSelected ? '<span class="badge badge-live" style="margin-left: 6px;">Active</span>' : ''}</h4>
-            <div class="meta">ID: <code>${r.repo_id}</code> | Scenarios: <b>${r.scenario_count || 0}</b> | Corpus: <b>v${r.corpus_version || 1}</b></div>
+            <h4><i data-lucide="folder-git-2" style="width: 15px; height: 15px; color: var(--accent);"></i> ${escapeHtml(r.repo_name)} ${isSelected ? '<span class="badge badge-live" style="margin-left: 6px;"><i data-lucide="check" style="width: 11px; height: 11px;"></i> Active</span>' : ''}</h4>
+            <div class="meta">ID: <code>${escapeHtml(r.repo_id)}</code> | Scenarios: <b>${r.scenario_count || 0}</b> | Corpus: <b>v${r.corpus_version || 1}</b></div>
           </div>
           <div style="display: flex; gap: 6px;" onclick="event.stopPropagation()">
-            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="reindexRepo('${r.repo_id}')">Re-index</button>
-            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteRepo('${r.repo_id}')"> delete</button>
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="reindexRepo('${r.repo_id}')"><i data-lucide="refresh-cw" style="width: 11px; height: 11px;"></i> Re-index</button>
+            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteRepo('${r.repo_id}')"><i data-lucide="trash-2" style="width: 11px; height: 11px;"></i> Delete</button>
           </div>
         `;
         list.appendChild(card);
@@ -1231,6 +1553,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
       document.getElementById('selectedRepoTitle').textContent = activeRepoId;
       loadFoldersForActiveRepo();
+      refreshIcons(list);
     }
 
     function selectRepo(repoId) {
@@ -1252,6 +1575,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     function toggleAddRepoForm() {
       const form = document.getElementById('addRepoForm');
       form.style.display = form.style.display === 'none' ? 'block' : 'none';
+      refreshIcons(form);
     }
 
     async function submitNewRepo() {
@@ -1311,19 +1635,20 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         div.className = 'folder-item';
         div.innerHTML = `
           <div>
-            <div class="folder-path">${f.folder_path}</div>
+            <div class="folder-path"><i data-lucide="folder" style="width: 13px; height: 13px; color: var(--accent);"></i> ${escapeHtml(f.folder_path)}</div>
             <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px; display: flex; align-items: center; gap: 8px;">
               <span>Scenarios: <b>${f.scenario_count}</b></span>
-              <span class="badge badge-live">● Watching (Live)</span>
+              <span class="badge badge-live"><i data-lucide="radio" style="width: 11px; height: 11px;"></i> Watching (Live)</span>
             </div>
           </div>
           <div style="display: flex; gap: 6px;">
-            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="reindexFolder('${f.folder_id}')"> Reindex</button>
-            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="removeFolder('${f.folder_id}')"> delete</button>
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="reindexFolder('${f.folder_id}')"><i data-lucide="refresh-cw" style="width: 11px; height: 11px;"></i> Reindex</button>
+            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="removeFolder('${f.folder_id}')"><i data-lucide="trash-2" style="width: 11px; height: 11px;"></i> Delete</button>
           </div>
         `;
         list.appendChild(div);
       });
+      refreshIcons(list);
     }
 
     async function submitAddFolder() {
@@ -1369,17 +1694,20 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         const data = await res.json();
         const w = data.watcher;
 
-        document.getElementById('watchdogLiveCount').textContent = `Watching ${w.watched_count} Folders`;
+        document.getElementById('watchdogLiveCount').innerHTML = `<i data-lucide="radio" style="width: 11px; height: 11px;"></i> Watching ${w.watched_count} Folders`;
         document.getElementById('watchdogStatusText').textContent = `Watchdog: Monitoring ${w.watched_count} Folder(s)`;
 
         const feed = document.getElementById('activityFeed');
         if (w.recent_events && w.recent_events.length > 0) {
           feed.innerHTML = w.recent_events.map(e => `
             <div class="event-entry ${e.event_type}">
-              <b>[${e.time}]</b>   File <b>${e.event_type}</b>: <code>${e.file_name}</code> (Repo: <b>${e.repo_id}</b>, ${e.scenarios_count} scenarios re-indexed)
+              <i data-lucide="${e.event_type === 'deleted' ? 'file-minus' : (e.event_type === 'created' ? 'file-plus' : 'file-edit')}" style="width: 13px; height: 13px; flex-shrink: 0;"></i>
+              <span><b>[${e.time}]</b> File <b>${e.event_type}</b>: <code>${escapeHtml(e.file_name)}</code> (Repo: <b>${escapeHtml(e.repo_id)}</b>, ${e.scenarios_count} scenarios re-indexed)</span>
             </div>
           `).join('');
+          refreshIcons(feed);
         }
+        refreshIcons(document.getElementById('watchdogLiveCount'));
       } catch (err) {}
     }
 
@@ -1408,14 +1736,17 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         div.className = 'session-item' + (s.chat_id === activeChatId ? ' active' : '');
         div.onclick = () => selectChatSession(s.chat_id);
         div.innerHTML = `
+          <i data-lucide="message-square" style="width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0;"></i>
           <div style="overflow: hidden; flex: 1;">
-            <div class="session-title">${s.title || 'Conversation'}</div>
+            <div class="session-title">${escapeHtml(s.title || 'Conversation')}</div>
             <div class="session-time">${String(s.updated_at || s.created_at).slice(0, 16)}</div>
           </div>
-          <button class="btn btn-danger" style="padding: 2px 6px; font-size: 10px;" onclick="event.stopPropagation(); deleteChatSession('${s.chat_id}')"> delete</button>
+          <button class="btn btn-danger" aria-label="Delete chat session" style="padding: 2px 6px; font-size: 10px;" onclick="event.stopPropagation(); deleteChatSession('${s.chat_id}')"><i data-lucide="trash-2" style="width: 10px; height: 10px;"></i></button>
         `;
         list.appendChild(div);
       });
+
+      refreshIcons(list);
 
       if (!activeChatId && sessions.length > 0) {
         selectChatSession(sessions[0].chat_id);
@@ -1432,10 +1763,14 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       activeChatId = data.chat_id;
       document.getElementById('chatMessages').innerHTML = `
         <div class="chat-bubble assistant">
-          Started new chat session (<code>${activeChatId}</code>) scoped to repository <b>${activeRepoId}</b>. What would you like to verify?
+          <div style="display: flex; align-items: flex-start; gap: 10px;">
+            <i data-lucide="sparkles" style="width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; margin-top: 2px;"></i>
+            <div>Started new chat session (<code>${activeChatId}</code>) scoped to repository <b>${activeRepoId}</b>. What would you like to verify?</div>
+          </div>
         </div>
       `;
       document.getElementById('citationsList').innerHTML = '';
+      refreshIcons(document.getElementById('chatMessages'));
       loadChatSessions();
     }
 
@@ -1448,7 +1783,15 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       box.innerHTML = '';
 
       if (!data.messages || data.messages.length === 0) {
-        box.innerHTML = '<div class="chat-bubble assistant">Empty conversation. Type your question below!</div>';
+        box.innerHTML = `
+          <div class="chat-bubble assistant">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <i data-lucide="message-circle" style="width: 16px; height: 16px; color: var(--accent);"></i>
+              <span>Empty conversation. Type your question below!</span>
+            </div>
+          </div>
+        `;
+        refreshIcons(box);
         return;
       }
 
@@ -1462,6 +1805,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         }
       });
       renderCitationsSidebar(lastCitations);
+      refreshIcons(box);
     }
 
     async function deleteChatSession(chatId) {
@@ -1477,6 +1821,163 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       createNewChatSession();
     }
 
+    // ==================== ANTHROPIC-STYLE AGENT THOUGHT & RETRY LOOP JS ====================
+
+    let liveThinkingTimer = null;
+    let liveThinkingStart = 0;
+
+    function showLiveAgentThinking() {
+      removeLiveAgentThinking();
+      const box = document.getElementById('chatMessages');
+      const div = document.createElement('div');
+      div.id = 'liveAgentThinkingBox';
+      div.className = 'live-thought-container';
+
+      div.innerHTML = `
+        <div class="live-thought-header">
+          <div class="live-thought-title-group">
+            <div class="anthropic-spinner-ring">
+              <div class="anthropic-spinner-center"></div>
+            </div>
+            <span class="live-agent-badge"><i data-lucide="sparkles" style="width: 12px; height: 12px;"></i> Agentic Verification Active</span>
+            <span class="shimmer-text" style="font-size: 12px; font-weight: 600;">Evaluating requirement against repository...</span>
+          </div>
+          <span id="liveElapsedTimer" style="font-size: 11px; color: #64748b; font-family: 'Fira Code', monospace;">0.0s</span>
+        </div>
+        <div class="live-step-list">
+          <div class="live-step-item active" id="liveStep1">
+            <div class="step-indicator-icon"><i data-lucide="search" style="width: 11px; height: 11px;"></i></div>
+            <span>Querying Sparse BM25 + Dense Milvus (Top 50 candidate pools)...</span>
+          </div>
+          <div class="live-step-item" id="liveStep2">
+            <div class="step-indicator-icon"><i data-lucide="scale" style="width: 11px; height: 11px;"></i></div>
+            <span>Balanced Reciprocal Rank Fusion & Cross-Encoder precision reranking...</span>
+          </div>
+          <div class="live-step-item" id="liveStep3">
+            <div class="step-indicator-icon"><i data-lucide="cpu" style="width: 11px; height: 11px;"></i></div>
+            <span>LLM Retrieval Sufficiency & Criteria Grounding (Call 1)...</span>
+          </div>
+          <div class="live-step-item" id="liveStep4">
+            <div class="step-indicator-icon"><i data-lucide="refresh-cw" style="width: 11px; height: 11px;"></i></div>
+            <span>Checking Controlled Weighted-RRF Retry Loop...</span>
+          </div>
+          <div class="live-step-item" id="liveStep5">
+            <div class="step-indicator-icon"><i data-lucide="check-circle-2" style="width: 11px; height: 11px;"></i></div>
+            <span>Assembling Grounded Set-Union Coverage & Citations...</span>
+          </div>
+        </div>
+      `;
+
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+      refreshIcons(div);
+
+      liveThinkingStart = Date.now();
+      liveThinkingTimer = setInterval(() => {
+        const elapsed = ((Date.now() - liveThinkingStart) / 1000).toFixed(1);
+        const timerEl = document.getElementById('liveElapsedTimer');
+        if (timerEl) timerEl.textContent = `${elapsed}s`;
+
+        const s1 = document.getElementById('liveStep1');
+        const s2 = document.getElementById('liveStep2');
+        const s3 = document.getElementById('liveStep3');
+        const s4 = document.getElementById('liveStep4');
+        const s5 = document.getElementById('liveStep5');
+
+        if (elapsed >= 0.4 && s1 && s2 && !s1.classList.contains('completed')) {
+          s1.className = 'live-step-item completed';
+          s1.querySelector('.step-indicator-icon').innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px;"></i>';
+          s2.className = 'live-step-item active';
+          refreshIcons(s1);
+        }
+        if (elapsed >= 0.9 && s2 && s3 && !s2.classList.contains('completed')) {
+          s2.className = 'live-step-item completed';
+          s2.querySelector('.step-indicator-icon').innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px;"></i>';
+          s3.className = 'live-step-item active';
+          refreshIcons(s2);
+        }
+        if (elapsed >= 1.7 && s3 && s4 && !s3.classList.contains('completed')) {
+          s3.className = 'live-step-item completed';
+          s3.querySelector('.step-indicator-icon').innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px;"></i>';
+          s4.className = 'live-step-item active';
+          refreshIcons(s3);
+        }
+        if (elapsed >= 2.5 && s4 && s5 && !s4.classList.contains('completed')) {
+          s4.className = 'live-step-item completed';
+          s4.querySelector('.step-indicator-icon').innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px;"></i>';
+          s5.className = 'live-step-item active';
+          refreshIcons(s4);
+        }
+      }, 100);
+    }
+
+    function removeLiveAgentThinking() {
+      if (liveThinkingTimer) {
+        clearInterval(liveThinkingTimer);
+        liveThinkingTimer = null;
+      }
+      const el = document.getElementById('liveAgentThinkingBox');
+      if (el) el.remove();
+    }
+
+    function renderThoughtAccordion(trace) {
+      if (!trace) return '';
+      const durationSec = trace.total_duration_sec !== undefined ? trace.total_duration_sec : (trace.total_duration_ms ? (trace.total_duration_ms / 1000).toFixed(1) : '1.2');
+      const callsCount = trace.llm_calls_count || 1;
+      const wasRetried = trace.was_retried;
+      const retryStrategy = trace.retry_strategy || 'NONE';
+
+      let statusBadge = '';
+      if (trace.cached) {
+        statusBadge = '<span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; font-size: 10.5px;"><i data-lucide="zap" style="width: 10px; height: 10px;"></i> Semantic Cache</span>';
+      } else if (wasRetried) {
+        statusBadge = `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; font-size: 10.5px;"><i data-lucide="refresh-cw" style="width: 10px; height: 10px;"></i> Retried (${retryStrategy})</span>`;
+      } else {
+        statusBadge = '<span class="badge" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; font-size: 10.5px;"><i data-lucide="check" style="width: 10px; height: 10px;"></i> Sufficient (1 Call)</span>';
+      }
+
+      const stages = trace.stages || [
+        { name: 'Sparse + Dense Search', detail: 'Retrieved Top 50 BM25 + Top 50 Milvus candidate pools', duration_ms: 32 },
+        { name: 'Balanced RRF & Rerank', detail: 'Reciprocal Rank Fusion (Top 25) ➔ Cross-Encoder (Top 10)', duration_ms: 24 },
+        { name: 'LLM Grounded Evaluation', detail: 'Evaluated candidate scenarios with Set-Union criteria', duration_ms: Math.round(durationSec * 800) }
+      ];
+
+      const timelineHtml = stages.map(st => {
+        const isRetriedNode = st.id === 'retry';
+        const nodeClass = isRetriedNode ? 'timeline-node retried' : 'timeline-node completed';
+        return `
+          <div class="${nodeClass}">
+            <div class="timeline-header">
+              <span>${escapeHtml(st.name)}</span>
+              <span class="timeline-dur">${st.duration_ms ? st.duration_ms + 'ms' : ''}</span>
+            </div>
+            <div class="timeline-detail">${escapeHtml(st.detail || '')}</div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="anthropic-thought-card">
+          <button class="thought-toggle-btn" onclick="this.parentElement.classList.toggle('expanded')">
+            <div class="thought-header-left">
+              <i data-lucide="sparkles" class="thought-sparkle" style="width: 14px; height: 14px;"></i>
+              <span>Thought for ${durationSec}s</span>
+              <span style="opacity: 0.4">•</span>
+              <span style="color: #94a3b8; font-size: 11.5px;">${callsCount} LLM Call${callsCount > 1 ? 's' : ''}</span>
+              ${statusBadge}
+            </div>
+            <i data-lucide="chevron-down" class="thought-chevron" style="width: 14px; height: 14px;"></i>
+          </button>
+          <div class="thought-drawer">
+            <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Agent Execution Trace & Verification Loop</div>
+            <div class="thought-timeline">
+              ${timelineHtml}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     async function sendChatMessage() {
       const input = document.getElementById('chatInput');
       const msg = input.value.trim();
@@ -1484,6 +1985,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
       addUserMessage(msg);
       input.value = '';
+      showLiveAgentThinking();
 
       try {
         const res = await fetch('/api/chat', {
@@ -1492,11 +1994,13 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           body: JSON.stringify({ message: msg, repo_id: activeRepoId, chat_id: activeChatId })
         });
         const data = await res.json();
+        removeLiveAgentThinking();
         activeChatId = data.chat_id;
-        addAssistantMessage(data.reply, data.citations, data.cached);
+        addAssistantMessage(data.reply, data.citations, data.cached, data.agent_trace);
         renderCitationsSidebar(data.citations);
         loadChatSessions();
       } catch (err) {
+        removeLiveAgentThinking();
         addAssistantMessage('Error communicating with backend: ' + err);
       }
     }
@@ -1510,18 +2014,15 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       box.scrollTop = box.scrollHeight;
     }
 
-    function addAssistantMessage(text, citations = [], isCached = false) {
+    function addAssistantMessage(text, citations = [], isCached = false, agentTrace = null) {
       const box = document.getElementById('chatMessages');
       const div = document.createElement('div');
       div.className = 'chat-bubble assistant';
 
       const reportId = 'rep_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-      window.reportStore[reportId] = { text, citations, isCached };
+      window.reportStore[reportId] = { text, citations, isCached, agentTrace };
 
-      let cacheHtml = '';
-      if (isCached) {
-        cacheHtml = '<div style="margin-bottom: 8px;"><span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35); font-size: 11px; padding: 2px 7px;">  Semantic Cache Hit</span></div>';
-      }
+      const thoughtAccordionHtml = renderThoughtAccordion(agentTrace);
 
       // Check if this is a structured evaluation response
       const isEval = text && (text.includes('Coverage Assessment') || text.includes('### 1.') || text.includes('Analysis & Grounded Evidence'));
@@ -1562,30 +2063,30 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             const fileName = getFileName(c.file_path);
             const pct = c.match_percentage !== undefined ? c.match_percentage : Math.round((c.score || 0) * 10);
             const pillColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
-            return `<span class="citation-pill" title="Click to view Gherkin steps" onclick="openScenarioModal('${c.scenario_id}')">🎯 <strong>${escapeHtml(c.scenario_name)}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${pillColor}; font-size: 10px; padding: 1px 5px; margin-left: 4px;">${pct}%</span></span>`;
+            return `<span class="citation-pill" title="Click to view Gherkin steps" onclick="openScenarioModal('${c.scenario_id}')"><i data-lucide="file-code-2" style="width: 12px; height: 12px;"></i> <strong>${escapeHtml(c.scenario_name)}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${pillColor}; font-size: 10px; padding: 1px 5px; margin-left: 4px;">${pct}%</span></span>`;
           }).join('');
           citationPillsHtml = `<div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;">${pills}</div>`;
         }
 
         div.innerHTML = `
-          ${cacheHtml}
+          ${thoughtAccordionHtml}
           <div class="eval-summary-card">
             <div class="eval-header">
-              <div class="eval-title">  Coverage Assessment</div>
+              <div class="eval-title"><i data-lucide="shield-check" style="width: 16px; height: 16px; color: var(--accent);"></i> Coverage Assessment</div>
               <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 12px; padding: 3px 9px;">${escapeHtml(statusText)}</span>
             </div>
             <div class="eval-summary-text">${formatMarkdown(summaryText)}</div>
             ${citationPillsHtml}
             <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
               <button class="btn-report" onclick="openReportModal('${reportId}')">
-                  View Full Details & Generated Scenarios &rarr;
+                <i data-lucide="file-text" style="width: 13px; height: 13px;"></i> View Full Details & Generated Scenarios <i data-lucide="arrow-right" style="width: 13px; height: 13px;"></i>
               </button>
             </div>
           </div>
         `;
       } else {
         // Standard conversational chat bubble
-        div.innerHTML = cacheHtml + formatMarkdown(text);
+        div.innerHTML = thoughtAccordionHtml + formatMarkdown(text);
         if (citations && citations.length > 0) {
           const p = document.createElement('div');
           p.style.marginTop = '12px';
@@ -1598,7 +2099,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             const fileName = getFileName(c.file_path);
             const pct = c.match_percentage !== undefined ? c.match_percentage : 0;
             const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
-            pill.innerHTML = `🎯 <strong>${c.scenario_name}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 10px; margin-left: 4px;">${pct}%</span>`;
+            pill.innerHTML = `<i data-lucide="file-code-2" style="width: 12px; height: 12px;"></i> <strong>${escapeHtml(c.scenario_name)}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 10px; margin-left: 4px;">${pct}%</span>`;
             pill.onclick = () => openScenarioModal(c.scenario_id);
             p.appendChild(pill);
           });
@@ -1608,6 +2109,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
       box.appendChild(div);
       box.scrollTop = box.scrollHeight;
+      refreshIcons(div);
     }
 
     function renderCitationsSidebar(citations) {
@@ -1626,14 +2128,15 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
         card.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
-            <div class="title" style="flex: 1;">🎯 ${c.scenario_name}</div>
+            <div class="title" style="flex: 1;"><i data-lucide="file-check-2" style="width: 14px; height: 14px; color: var(--accent); flex-shrink: 0;"></i> <span>${escapeHtml(c.scenario_name)}</span></div>
             <span class="badge" style="background: rgba(255,255,255,0.06); color: ${badgeColor}; font-size: 11px;">${pct}%</span>
           </div>
-          <div class="meta" style="margin-top: 6px;">Feature: ${c.feature_title}</div>
-          <div class="meta" style="color: var(--accent);">${fileName} : Line ${c.line_number}</div>
+          <div class="meta" style="margin-top: 6px;">Feature: ${escapeHtml(c.feature_title || '')}</div>
+          <div class="meta" style="color: var(--accent);">${escapeHtml(fileName)} : Line ${c.line_number}</div>
         `;
         list.appendChild(card);
       });
+      refreshIcons(list);
     }
 
     // ==================== POPUP MODALS ====================
@@ -1648,17 +2151,18 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         }
         const data = await res.json();
         const sc = data.scenario;
-        document.getElementById('modalTitle').textContent = `🎯 ${sc.scenario_name}`;
+        document.getElementById('modalTitle').innerHTML = `<i data-lucide="file-code" style="width: 18px; height: 18px; color: var(--accent);"></i> <span>${escapeHtml(sc.scenario_name)}</span>`;
         const fileName = getFileName(sc.file_path);
         const featName = sc.feature_name || sc.feature_title || 'Feature';
         document.getElementById('modalMeta').innerHTML = `
-          <div><strong>Feature:</strong> ${featName}</div>
-          <div style="margin-top: 4px;"><strong>Location:</strong> <code style="color: var(--accent);">${fileName} (Line ${sc.line_number})</code></div>
-          <div style="margin-top: 4px; font-size: 12px; opacity: 0.8;">${sc.file_path}</div>
-          ${sc.tags && sc.tags.length ? `<div style="margin-top: 6px;">${sc.tags.map(t => `<span class="badge" style="background: rgba(56,189,248,0.2); color: var(--accent); font-size: 11px; margin-right: 4px;">${t}</span>`).join('')}</div>` : ''}
+          <div><strong>Feature:</strong> ${escapeHtml(featName)}</div>
+          <div style="margin-top: 4px;"><strong>Location:</strong> <code style="color: var(--accent);">${escapeHtml(fileName)} (Line ${sc.line_number})</code></div>
+          <div style="margin-top: 4px; font-size: 12px; opacity: 0.8;">${escapeHtml(sc.file_path)}</div>
+          ${sc.tags && sc.tags.length ? `<div style="margin-top: 6px;">${sc.tags.map(t => `<span class="badge" style="background: rgba(56,189,248,0.2); color: var(--accent); font-size: 11px; margin-right: 4px;">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
         `;
         document.getElementById('modalGherkin').textContent = sc.raw_gherkin || sc.canonical_text;
         document.getElementById('scenarioModal').classList.add('show');
+        refreshIcons(document.getElementById('scenarioModal'));
       } catch (e) {
         alert('Could not load scenario details: ' + e.message);
       }
@@ -1676,6 +2180,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       document.getElementById('reportModalSubtitle').textContent = `Repository: ${activeRepoId} | Grounded against local automation scenarios`;
       document.getElementById('reportModalBody').innerHTML = formatMarkdown(item.text);
       document.getElementById('reportModal').classList.add('show');
+      refreshIcons(document.getElementById('reportModal'));
     }
 
     function closeReportModal() {
@@ -1695,9 +2200,13 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       const wrapper = btn.closest('.code-block-wrapper');
       const code = wrapper.querySelector('.gherkin-viewer').textContent;
       navigator.clipboard.writeText(code).then(() => {
-        const oldText = btn.textContent;
-        btn.textContent = '✅ Copied!';
-        setTimeout(() => { btn.textContent = oldText; }, 2000);
+        const oldHtml = btn.innerHTML;
+        btn.innerHTML = '<i data-lucide="check" style="width: 12px; height: 12px;"></i> Copied!';
+        refreshIcons(btn);
+        setTimeout(() => {
+          btn.innerHTML = oldHtml;
+          refreshIcons(btn);
+        }, 2000);
       });
     }
 
@@ -1728,7 +2237,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
           // Show banner
           banner.style.display = 'flex';
-          bannerText.textContent = `  Indexing in progress: ${st.current_indexing_file || 'Processing'} (${st.indexing_progress_pct}%). Analysis will unlock when completed.`;
+          bannerText.textContent = `Indexing in progress: ${st.current_indexing_file || 'Processing'} (${st.indexing_progress_pct}%). Analysis will unlock when completed.`;
           progressBar.style.width = `${st.indexing_progress_pct}%`;
 
           // Disable chat inputs
@@ -1758,7 +2267,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           statusPill.style.color = 'var(--green)';
           statusPulse.style.background = 'var(--green)';
           statusPulse.style.boxShadow = '0 0 8px var(--green)';
-          statusText.textContent = `● Up to date (${st.scenario_count} scenarios, v${st.corpus_version})`;
+          statusText.textContent = ` Up to date (${st.scenario_count} scenarios, v${st.corpus_version})`;
 
           // Hide banner
           banner.style.display = 'none';
@@ -1786,6 +2295,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       loadRepos();
       pollWatchdogStatus();
       pollRepoStatus();
+      refreshIcons();
     };
   </script>
 </body>

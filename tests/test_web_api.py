@@ -12,8 +12,8 @@ def test_api_endpoints():
     resp = client.get("/")
     assert resp.status_code == 200
     assert "Local RAG BDD Automation Agent" in resp.text
-    assert "🗂️ Indexer" in resp.text
-    assert "💬 RAG Bot" in resp.text
+    assert "Indexer" in resp.text
+    assert "RAG Bot" in resp.text
 
     # 2. Test GET /api/repos
     resp_repos = client.get("/api/repos")

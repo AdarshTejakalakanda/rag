@@ -376,7 +376,7 @@ class ScenarioCitation:
 
 @dataclass
 class RequirementJudgeVerdict:
-    """Judge verdict for a single business requirement."""
+    """Judge verdict for a single business requirement with agentic retrieval telemetry."""
     req_id: str
     title: str
     category: str
@@ -392,6 +392,11 @@ class RequirementJudgeVerdict:
     suggested_tests: List[str] = field(default_factory=list)
     coverage_map: List[Dict[str, Any]] = field(default_factory=list)
     cached: bool = False
+    retrieval_decision: str = "SUFFICIENT_EVIDENCE"  # "SUFFICIENT_EVIDENCE" | "INSUFFICIENT_EVIDENCE"
+    retry_strategy: str = "NONE"  # "NONE" | "LEXICAL_HEAVY" | "DENSE_HEAVY"
+    retry_reason: str = ""
+    was_retried: bool = False
+    llm_calls_count: int = 1
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -411,11 +416,16 @@ class RequirementJudgeVerdict:
             "suggested_tests": self.suggested_tests,
             "coverage_map": self.coverage_map,
             "cached": self.cached,
+            "retrieval_decision": self.retrieval_decision,
+            "retry_strategy": self.retry_strategy,
+            "retry_reason": self.retry_reason,
+            "was_retried": self.was_retried,
+            "llm_calls_count": self.llm_calls_count,
         }
 
 
 class LLMJudge:
-    """Evaluates requirement against Top 10 candidate scenarios in ONE LLM call."""
+    """Evaluates requirement against candidate scenarios with Agentic Retrieval-Sufficiency & Controlled Retry."""
 
     prompt_version = PROMPT_VERSION
 
@@ -435,11 +445,23 @@ class LLMJudge:
         candidates: List[Tuple[ScenarioChunk, float, Dict[str, Any]]],
         repo_id: str = "default",
         bypass_cache: bool = False,
+        retrieval_pool: Optional[Dict[str, Any]] = None,
+        retriever: Optional[Any] = None,
     ) -> RequirementJudgeVerdict:
         """
-        Executes ONE LLM call evaluating all candidates independently, then unions
-        criteria across files. Checks multi-factor semantic cache in SQLite first unless bypass_cache=True.
+        Evaluates candidate scenarios against requirement. If retrieval_pool and retriever
+        are provided, transparently performs Agentic Retrieval Sufficiency check & Controlled Retry.
         """
+        if retrieval_pool is not None and retriever is not None:
+            return self.judge_requirement_agentic(
+                requirement=requirement,
+                candidates=candidates,
+                retrieval_pool=retrieval_pool,
+                retriever=retriever,
+                repo_id=repo_id,
+                bypass_cache=bypass_cache,
+            )
+
         candidate_ids = [sc.scenario_id for sc, _, _ in candidates]
 
         if not bypass_cache and self.state_db:
@@ -474,6 +496,11 @@ class LLMJudge:
                 suggested_tests=[f"Create automated test scenario for {requirement.title}"],
                 coverage_map=[],
                 cached=False,
+                retrieval_decision="INSUFFICIENT_EVIDENCE",
+                retry_strategy="NONE",
+                retry_reason="No test scenarios found in repository.",
+                was_retried=False,
+                llm_calls_count=0,
             )
 
         scenarios_text_blocks = []
@@ -525,6 +552,70 @@ class LLMJudge:
 
         return self._build_verdict_from_response(requirement, candidates, response_dict, criterion_id_map)
 
+    def judge_requirement_agentic(
+        self,
+        requirement: RequirementChunk,
+        candidates: List[Tuple[ScenarioChunk, float, Dict[str, Any]]],
+        retrieval_pool: Optional[Dict[str, Any]] = None,
+        retriever: Optional[Any] = None,
+        repo_id: str = "default",
+        bypass_cache: bool = False,
+    ) -> RequirementJudgeVerdict:
+        """
+        Executes Agentic Retrieval-Sufficiency check and One Controlled Retry:
+        • Call 1: Evaluates initial Top 10 candidates.
+        • If LLM determines evidence is INSUFFICIENT with LEXICAL_HEAVY or DENSE_HEAVY:
+            -> Executes ONE controlled retry using Weighted RRF on cached Top 50 pool -> Cross-Encoder -> New Top 10.
+            -> If new candidates are surfaced: Call 2 evaluates the new candidate set for final coverage.
+        • Total LLM calls: exactly 1 (normal) or 2 (retry).
+        """
+        # Step 1: Execute Call 1 (Coverage & Retrieval Sufficiency)
+        verdict = self.judge_requirement(
+            requirement=requirement,
+            candidates=candidates,
+            repo_id=repo_id,
+            bypass_cache=bypass_cache,
+            retrieval_pool=None,
+            retriever=None,
+        )
+
+        # Step 2: Branch on Retrieval Sufficiency Decision
+        if (
+            verdict.retrieval_decision == "INSUFFICIENT_EVIDENCE"
+            and verdict.retry_strategy in ("LEXICAL_HEAVY", "DENSE_HEAVY")
+            and retrieval_pool is not None
+            and retriever is not None
+            and not verdict.cached
+        ):
+            strategy = verdict.retry_strategy
+            reason = verdict.retry_reason
+            print(f"[Agentic RAG] Sufficiency check failed for [{requirement.req_id}]. Triggering controlled retry: '{strategy}'. Reason: {reason}")
+
+            # Re-fuse already retrieved Top 50 lists with Weighted RRF (Zero extra DB queries)
+            retry_candidates = retriever.retry_with_strategy(retrieval_pool, strategy=strategy)
+
+            initial_ids = {sc.scenario_id for sc, _, _ in candidates}
+            retry_ids = {sc.scenario_id for sc, _, _ in retry_candidates}
+
+            if retry_candidates and retry_ids != initial_ids:
+                new_count = len(retry_ids - initial_ids)
+                print(f"[Agentic RAG] Weighted RRF surfaced {new_count} new candidate(s). Executing Call 2 (Final Judge)...")
+                retry_verdict = self.judge_requirement(
+                    requirement=requirement,
+                    candidates=retry_candidates,
+                    repo_id=repo_id,
+                    bypass_cache=True,
+                    retrieval_pool=None,
+                    retriever=None,
+                )
+                retry_verdict.was_retried = True
+                retry_verdict.retry_strategy = strategy
+                retry_verdict.retry_reason = reason
+                retry_verdict.llm_calls_count = 2
+                return retry_verdict
+
+        return verdict
+
     def _build_verdict_from_response(
         self,
         requirement: RequirementChunk,
@@ -537,6 +628,19 @@ class LLMJudge:
 
         evals = data.get("evaluations", [])
         overall_summary = data.get("overall_summary", {}) or {}
+        rs_raw = data.get("retrieval_sufficiency")
+        rs_data = rs_raw if isinstance(rs_raw, dict) else {}
+
+        retrieval_decision = str(rs_data.get("decision") or "SUFFICIENT_EVIDENCE").strip().upper()
+        if retrieval_decision not in ("SUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE"):
+            retrieval_decision = "SUFFICIENT_EVIDENCE"
+
+        retry_strategy = str(rs_data.get("retry_strategy") or "NONE").strip().upper()
+        if retry_strategy not in ("NONE", "LEXICAL_HEAVY", "DENSE_HEAVY"):
+            retry_strategy = "NONE"
+
+        retry_reason = str(rs_data.get("reason") or "").strip()
+
         eval_map = {(e.get("scenario_id") or e.get("document_id")): e for e in evals if isinstance(e, dict)}
 
         union = compute_union_coverage(
@@ -635,4 +739,9 @@ class LLMJudge:
             suggested_tests=suggested_intents,
             coverage_map=union["coverage_map"],
             cached=False,
+            retrieval_decision=retrieval_decision,
+            retry_strategy=retry_strategy,
+            retry_reason=retry_reason,
+            was_retried=False,
+            llm_calls_count=1,
         )
