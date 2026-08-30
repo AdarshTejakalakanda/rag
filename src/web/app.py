@@ -2081,7 +2081,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             ${citationPillsHtml}
             <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
               <button class="btn-report" onclick="openReportModal('${reportId}')">
-                <i data-lucide="file-text" style="width: 13px; height: 13px;"></i> View Full Details & Generated Scenarios <i data-lucide="arrow-right" style="width: 13px; height: 13px;"></i>
+                <i data-lucide="file-text" style="width: 13px; height: 13px;"></i> View Full Details & Grounded Evidence <i data-lucide="arrow-right" style="width: 13px; height: 13px;"></i>
               </button>
             </div>
           </div>
