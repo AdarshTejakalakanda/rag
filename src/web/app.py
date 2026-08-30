@@ -1956,6 +1956,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         `;
       }).join('');
 
+      const callsLabel = trace.cached || callsCount === 0 ? '0 LLM Calls (Cached)' : `${callsCount} LLM Call${callsCount > 1 ? 's' : ''}`;
+
       return `
         <div class="anthropic-thought-card">
           <button class="thought-toggle-btn" onclick="this.parentElement.classList.toggle('expanded')">
@@ -1963,7 +1965,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
               <i data-lucide="sparkles" class="thought-sparkle" style="width: 14px; height: 14px;"></i>
               <span>Thought for ${durationSec}s</span>
               <span style="opacity: 0.4">•</span>
-              <span style="color: #94a3b8; font-size: 11.5px;">${callsCount} LLM Call${callsCount > 1 ? 's' : ''}</span>
+              <span style="color: #94a3b8; font-size: 11.5px;">${callsLabel}</span>
               ${statusBadge}
             </div>
             <i data-lucide="chevron-down" class="thought-chevron" style="width: 14px; height: 14px;"></i>

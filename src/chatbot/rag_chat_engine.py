@@ -159,6 +159,7 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
         if cached_data and isinstance(cached_data, dict) and "reply" in cached_data:
             reply_text = cached_data["reply"]
             cached_hit = True
+            llm_calls_count = 0
             stages.append({
                 "id": "cache",
                 "name": "Semantic Cache Hit",
@@ -282,10 +283,20 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
                 except Exception:
                     pass
 
-        if llm_match_pct is not None and citations_data:
-            for idx, c in enumerate(citations_data):
-                if c["scenario_name"].lower() in reply_text.lower() or idx == 0:
+        if citations_data:
+            reply_lower = reply_text.lower()
+            for c in citations_data:
+                sc_name = c["scenario_name"].lower()
+                f_name = Path(c.get("file_path", "")).name.lower()
+                is_cited = sc_name in reply_lower or (f_name and f_name in reply_lower and sc_name[:15] in reply_lower)
+                if is_cited and llm_match_pct is not None:
                     c["match_percentage"] = llm_match_pct
+                    c["is_cited"] = True
+                else:
+                    c["is_cited"] = is_cited
+
+            # Sort citations: cited scenarios first, then by match_percentage descending
+            citations_data.sort(key=lambda x: (1 if x.get("is_cited") else 0, x.get("match_percentage", 0)), reverse=True)
 
         # Record assistant reply in SQLite
         self.state_db.add_chat_message(
