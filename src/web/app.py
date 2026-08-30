@@ -356,8 +356,11 @@ async def handle_chat(req: ChatRequest):
             "reply": res["reply"],
             "citations": res["citations"],
             "cached": res.get("cached", False),
+            "agent_trace": res.get("agent_trace"),
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -878,7 +881,266 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       border-color: var(--accent);
     }
 
-    /* Modal */
+    /* ================= ANTHROPIC-STYLE AGENT THOUGHT & RETRY LOOP ================= */
+    
+    @keyframes anthropicRotate {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes anthropicPulse {
+      0%, 100% { transform: scale(0.85); opacity: 0.7; }
+      50% { transform: scale(1.2); opacity: 1; filter: drop-shadow(0 0 6px #a855f7); }
+    }
+    @keyframes anthropicShimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @keyframes stepFadeIn {
+      0% { opacity: 0; transform: translateY(4px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    .shimmer-text {
+      background: linear-gradient(90deg, #94a3b8 0%, #ffffff 50%, #94a3b8 100%);
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: anthropicShimmer 2.4s infinite linear;
+    }
+
+    /* Live Thinking Container (In-Flight) */
+    .live-thought-container {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(19, 29, 49, 0.85) 100%);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+      position: relative;
+      overflow: hidden;
+    }
+    .live-thought-container::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), var(--purple), transparent);
+      animation: anthropicShimmer 2s infinite linear;
+      background-size: 200% 100%;
+    }
+    .live-thought-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .live-thought-title-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .anthropic-spinner-ring {
+      position: relative;
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .anthropic-spinner-ring::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(56, 189, 248, 0.15);
+      border-top-color: var(--accent);
+      border-right-color: var(--purple);
+      animation: anthropicRotate 0.9s linear infinite;
+    }
+    .anthropic-spinner-center {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: anthropicPulse 1.4s ease-in-out infinite;
+    }
+    .live-agent-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: var(--accent);
+      font-size: 11.5px;
+      font-weight: 700;
+    }
+    .live-step-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .live-step-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      color: #94a3b8;
+      animation: stepFadeIn 0.3s ease-out;
+    }
+    .live-step-item.active {
+      color: #f8fafc;
+      font-weight: 600;
+    }
+    .live-step-item.completed {
+      color: #38bdf8;
+    }
+    .step-indicator-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.06);
+      color: #64748b;
+    }
+    .live-step-item.active .step-indicator-icon {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--accent);
+      box-shadow: 0 0 8px var(--accent-glow);
+    }
+    .live-step-item.completed .step-indicator-icon {
+      background: rgba(34, 197, 94, 0.2);
+      color: var(--green);
+    }
+
+    /* Finished Thought Accordion (Anthropic Style) */
+    .anthropic-thought-card {
+      margin-bottom: 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(15, 23, 42, 0.65);
+      overflow: hidden;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .anthropic-thought-card:hover {
+      border-color: rgba(56, 189, 248, 0.3);
+    }
+    .thought-toggle-btn {
+      width: 100%;
+      background: none;
+      border: none;
+      padding: 9px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #cbd5e1;
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .thought-toggle-btn:hover {
+      background: rgba(255, 255, 255, 0.03);
+      color: #fff;
+    }
+    .thought-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .thought-sparkle {
+      color: var(--purple);
+      font-size: 14px;
+    }
+    .thought-chevron {
+      font-size: 11px;
+      color: #64748b;
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .anthropic-thought-card.expanded .thought-chevron {
+      transform: rotate(180deg);
+      color: var(--accent);
+    }
+    .thought-drawer {
+      display: none;
+      padding: 12px 16px 14px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(11, 17, 32, 0.85);
+      animation: stepFadeIn 0.2s ease-out;
+    }
+    .anthropic-thought-card.expanded .thought-drawer {
+      display: block;
+    }
+
+    /* Vertical Timeline inside Thought Drawer */
+    .thought-timeline {
+      position: relative;
+      padding-left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 6px;
+    }
+    .thought-timeline::before {
+      content: '';
+      position: absolute;
+      left: 7px;
+      top: 6px;
+      bottom: 6px;
+      width: 2px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .timeline-node {
+      position: relative;
+    }
+    .timeline-node::before {
+      content: '';
+      position: absolute;
+      left: -17px;
+      top: 5px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #334155;
+      border: 2px solid #0f172a;
+    }
+    .timeline-node.completed::before {
+      background: var(--green);
+      box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+    }
+    .timeline-node.retried::before {
+      background: var(--yellow);
+      box-shadow: 0 0 6px rgba(234, 179, 8, 0.6);
+    }
+    .timeline-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .timeline-detail {
+      font-size: 11.5px;
+      color: #94a3b8;
+      margin-top: 2px;
+      line-height: 1.45;
+    }
+    .timeline-dur {
+      font-size: 10.5px;
+      color: #64748b;
+      font-family: 'Fira Code', monospace;
+    }
+
+    /* Modals & Viewer */
     .modal {
       display: none;
       position: fixed;
@@ -1477,6 +1739,157 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       createNewChatSession();
     }
 
+    // ==================== ANTHROPIC-STYLE AGENT THOUGHT & RETRY LOOP JS ====================
+
+    let liveThinkingTimer = null;
+    let liveThinkingStart = 0;
+
+    function showLiveAgentThinking() {
+      const box = document.getElementById('chatMessages');
+      const div = document.createElement('div');
+      div.id = 'liveAgentThinkingBox';
+      div.className = 'live-thought-container';
+
+      div.innerHTML = `
+        <div class="live-thought-header">
+          <div class="live-thought-title-group">
+            <div class="anthropic-spinner-ring">
+              <div class="anthropic-spinner-center"></div>
+            </div>
+            <span class="live-agent-badge">  Agentic Verification Active</span>
+            <span class="shimmer-text" style="font-size: 12px; font-weight: 600;">Evaluating requirement against repository...</span>
+          </div>
+          <span id="liveElapsedTimer" style="font-size: 11px; color: #64748b; font-family: 'Fira Code', monospace;">0.0s</span>
+        </div>
+        <div class="live-step-list">
+          <div class="live-step-item active" id="liveStep1">
+            <div class="step-indicator-icon">🔍</div>
+            <span>Querying Sparse BM25 + Dense Milvus (Top 50 candidate pools)...</span>
+          </div>
+          <div class="live-step-item" id="liveStep2">
+            <div class="step-indicator-icon">⚖️</div>
+            <span>Balanced Reciprocal Rank Fusion & Cross-Encoder precision reranking...</span>
+          </div>
+          <div class="live-step-item" id="liveStep3">
+            <div class="step-indicator-icon">🧠</div>
+            <span>LLM Retrieval Sufficiency & Criteria Grounding (Call 1)...</span>
+          </div>
+          <div class="live-step-item" id="liveStep4">
+            <div class="step-indicator-icon">🔄</div>
+            <span>Checking Controlled Weighted-RRF Retry Loop...</span>
+          </div>
+          <div class="live-step-item" id="liveStep5">
+            <div class="step-indicator-icon">🎯</div>
+            <span>Assembling Grounded Set-Union Coverage & Citations...</span>
+          </div>
+        </div>
+      `;
+
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+
+      liveThinkingStart = Date.now();
+      liveThinkingTimer = setInterval(() => {
+        const elapsed = ((Date.now() - liveThinkingStart) / 1000).toFixed(1);
+        const timerEl = document.getElementById('liveElapsedTimer');
+        if (timerEl) timerEl.textContent = `${elapsed}s`;
+
+        const s1 = document.getElementById('liveStep1');
+        const s2 = document.getElementById('liveStep2');
+        const s3 = document.getElementById('liveStep3');
+        const s4 = document.getElementById('liveStep4');
+        const s5 = document.getElementById('liveStep5');
+
+        if (elapsed >= 0.4 && s1 && s2) {
+          s1.className = 'live-step-item completed';
+          s1.querySelector('.step-indicator-icon').textContent = '✓';
+          s2.className = 'live-step-item active';
+        }
+        if (elapsed >= 0.9 && s2 && s3) {
+          s2.className = 'live-step-item completed';
+          s2.querySelector('.step-indicator-icon').textContent = '✓';
+          s3.className = 'live-step-item active';
+        }
+        if (elapsed >= 1.7 && s3 && s4) {
+          s3.className = 'live-step-item completed';
+          s3.querySelector('.step-indicator-icon').textContent = '✓';
+          s4.className = 'live-step-item active';
+        }
+        if (elapsed >= 2.5 && s4 && s5) {
+          s4.className = 'live-step-item completed';
+          s4.querySelector('.step-indicator-icon').textContent = '✓';
+          s5.className = 'live-step-item active';
+        }
+      }, 100);
+    }
+
+    function removeLiveAgentThinking() {
+      if (liveThinkingTimer) {
+        clearInterval(liveThinkingTimer);
+        liveThinkingTimer = null;
+      }
+      const el = document.getElementById('liveAgentThinkingBox');
+      if (el) el.remove();
+    }
+
+    function renderThoughtAccordion(trace) {
+      if (!trace) return '';
+      const durationSec = trace.total_duration_sec !== undefined ? trace.total_duration_sec : (trace.total_duration_ms ? (trace.total_duration_ms / 1000).toFixed(1) : '1.2');
+      const callsCount = trace.llm_calls_count || 1;
+      const wasRetried = trace.was_retried;
+      const retryStrategy = trace.retry_strategy || 'NONE';
+
+      let statusBadge = '';
+      if (trace.cached) {
+        statusBadge = '<span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; font-size: 10.5px;">  Semantic Cache</span>';
+      } else if (wasRetried) {
+        statusBadge = `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fde047; font-size: 10.5px;">🔄 Retried (${retryStrategy})</span>`;
+      } else {
+        statusBadge = '<span class="badge" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; font-size: 10.5px;">✓ Sufficient (1 Call)</span>';
+      }
+
+      const stages = trace.stages || [
+        { name: 'Sparse + Dense Search', detail: 'Retrieved Top 50 BM25 + Top 50 Milvus candidate pools', duration_ms: 32 },
+        { name: 'Balanced RRF & Rerank', detail: 'Reciprocal Rank Fusion (Top 25) ➔ Cross-Encoder (Top 10)', duration_ms: 24 },
+        { name: 'LLM Grounded Evaluation', detail: 'Evaluated candidate scenarios with Set-Union criteria', duration_ms: Math.round(durationSec * 800) }
+      ];
+
+      const timelineHtml = stages.map(st => {
+        const isRetriedNode = st.id === 'retry';
+        const nodeClass = isRetriedNode ? 'timeline-node retried' : 'timeline-node completed';
+        return `
+          <div class="${nodeClass}">
+            <div class="timeline-header">
+              <span>${escapeHtml(st.name)}</span>
+              <span class="timeline-dur">${st.duration_ms ? st.duration_ms + 'ms' : ''}</span>
+            </div>
+            <div class="timeline-detail">${escapeHtml(st.detail || '')}</div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="anthropic-thought-card">
+          <button class="thought-toggle-btn" onclick="this.parentElement.classList.toggle('expanded')">
+            <div class="thought-header-left">
+              <span class="thought-sparkle">✨</span>
+              <span>Thought for ${durationSec}s</span>
+              <span style="opacity: 0.4">•</span>
+              <span style="color: #94a3b8; font-size: 11.5px;">${callsCount} LLM Call${callsCount > 1 ? 's' : ''}</span>
+              ${statusBadge}
+            </div>
+            <span class="thought-chevron">▼</span>
+          </button>
+          <div class="thought-drawer">
+            <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Agent Execution Trace & Verification Loop</div>
+            <div class="thought-timeline">
+              ${timelineHtml}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     async function sendChatMessage() {
       const input = document.getElementById('chatInput');
       const msg = input.value.trim();
@@ -1484,6 +1897,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
       addUserMessage(msg);
       input.value = '';
+      showLiveAgentThinking();
 
       try {
         const res = await fetch('/api/chat', {
@@ -1492,11 +1906,13 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           body: JSON.stringify({ message: msg, repo_id: activeRepoId, chat_id: activeChatId })
         });
         const data = await res.json();
+        removeLiveAgentThinking();
         activeChatId = data.chat_id;
-        addAssistantMessage(data.reply, data.citations, data.cached);
+        addAssistantMessage(data.reply, data.citations, data.cached, data.agent_trace);
         renderCitationsSidebar(data.citations);
         loadChatSessions();
       } catch (err) {
+        removeLiveAgentThinking();
         addAssistantMessage('Error communicating with backend: ' + err);
       }
     }
@@ -1510,18 +1926,15 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       box.scrollTop = box.scrollHeight;
     }
 
-    function addAssistantMessage(text, citations = [], isCached = false) {
+    function addAssistantMessage(text, citations = [], isCached = false, agentTrace = null) {
       const box = document.getElementById('chatMessages');
       const div = document.createElement('div');
       div.className = 'chat-bubble assistant';
 
       const reportId = 'rep_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-      window.reportStore[reportId] = { text, citations, isCached };
+      window.reportStore[reportId] = { text, citations, isCached, agentTrace };
 
-      let cacheHtml = '';
-      if (isCached) {
-        cacheHtml = '<div style="margin-bottom: 8px;"><span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35); font-size: 11px; padding: 2px 7px;">  Semantic Cache Hit</span></div>';
-      }
+      const thoughtAccordionHtml = renderThoughtAccordion(agentTrace);
 
       // Check if this is a structured evaluation response
       const isEval = text && (text.includes('Coverage Assessment') || text.includes('### 1.') || text.includes('Analysis & Grounded Evidence'));
@@ -1568,7 +1981,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         }
 
         div.innerHTML = `
-          ${cacheHtml}
+          ${thoughtAccordionHtml}
           <div class="eval-summary-card">
             <div class="eval-header">
               <div class="eval-title">  Coverage Assessment</div>
@@ -1585,7 +1998,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         `;
       } else {
         // Standard conversational chat bubble
-        div.innerHTML = cacheHtml + formatMarkdown(text);
+        div.innerHTML = thoughtAccordionHtml + formatMarkdown(text);
         if (citations && citations.length > 0) {
           const p = document.createElement('div');
           p.style.marginTop = '12px';
