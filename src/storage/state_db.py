@@ -206,6 +206,7 @@ class StateDatabase:
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
                     citations_json TEXT,
+                    agent_trace_json TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (chat_id) REFERENCES chat_sessions(chat_id) ON DELETE CASCADE
                 );
@@ -234,6 +235,7 @@ class StateDatabase:
             migrations = [
                 ("chat_messages", "message_id", "TEXT"),
                 ("chat_messages", "citations_json", "TEXT"),
+                ("chat_messages", "agent_trace_json", "TEXT"),
                 ("chat_sessions", "analysis_id", "TEXT"),
                 ("chat_sessions", "corpus_version", "INTEGER DEFAULT 1"),
                 ("repositories", "corpus_version", "INTEGER DEFAULT 1"),
@@ -878,18 +880,28 @@ class StateDatabase:
             out = []
             for r in rows:
                 d = dict(r)
-                d["citations"] = json.loads(d["citations_json"] or "[]")
+                d["citations"] = json.loads(d.get("citations_json") or "[]")
+                trace_raw = d.get("agent_trace_json")
+                d["agent_trace"] = json.loads(trace_raw) if trace_raw else None
                 out.append(d)
             return out
 
-    def add_chat_message(self, chat_id: str, role: str, content: str, citations: Optional[List[dict]] = None):
+    def add_chat_message(
+        self,
+        chat_id: str,
+        role: str,
+        content: str,
+        citations: Optional[List[dict]] = None,
+        agent_trace: Optional[dict] = None,
+    ):
         msg_id = f"msg_{uuid.uuid4().hex[:12]}"
         now = datetime.now().isoformat()
+        trace_json = json.dumps(agent_trace) if agent_trace else None
         with self._get_connection() as conn:
             conn.cursor().execute("""
-                INSERT INTO chat_messages (message_id, chat_id, role, content, citations_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (msg_id, chat_id, role, content, json.dumps(citations or []), now))
+                INSERT INTO chat_messages (message_id, chat_id, role, content, citations_json, agent_trace_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (msg_id, chat_id, role, content, json.dumps(citations or []), trace_json, now))
             conn.cursor().execute("UPDATE chat_sessions SET updated_at = ? WHERE chat_id = ?", (now, chat_id))
             conn.commit()
 
@@ -1067,7 +1079,7 @@ class StateDatabase:
             conn.commit()
 
     def clear_chat_sessions(self, repo_id: Optional[str] = None):
-        """Clears chat history and sessions from SQLite."""
+        """Clears chat history, sessions, and semantic cache from SQLite."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             if repo_id:
@@ -1076,15 +1088,36 @@ class StateDatabase:
                     WHERE chat_id IN (SELECT chat_id FROM chat_sessions WHERE repo_id = ?)
                 """, (repo_id,))
                 cursor.execute("DELETE FROM chat_sessions WHERE repo_id = ?", (repo_id,))
+                cursor.execute("DELETE FROM semantic_cache WHERE repo_id = ?", (repo_id,))
             else:
                 cursor.execute("DELETE FROM chat_messages;")
                 cursor.execute("DELETE FROM chat_sessions;")
+                cursor.execute("DELETE FROM semantic_cache;")
+            conn.commit()
+
+    def clear_semantic_cache(self, repo_id: Optional[str] = None):
+        """Clears semantic judgment cache from SQLite for a specific repo or all repos."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if repo_id:
+                cursor.execute("DELETE FROM semantic_cache WHERE repo_id = ?", (repo_id,))
+            else:
+                cursor.execute("DELETE FROM semantic_cache;")
             conn.commit()
 
     def delete_chat_session(self, chat_id: str) -> bool:
-        """Deletes a specific chat session and all its messages."""
+        """Deletes a specific chat session, its messages, and associated semantic cache entries."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # 1. Invalidate semantic cache entries associated with this session's user questions
+            rows = cursor.execute("SELECT content FROM chat_messages WHERE chat_id = ? AND role = 'user';", (chat_id,)).fetchall()
+            for r in rows:
+                query_text = r["content"] if isinstance(r, sqlite3.Row) else r[0]
+                if query_text:
+                    req_hash = fast_hash(query_text.strip())
+                    cursor.execute("DELETE FROM semantic_cache WHERE requirement_hash = ? OR requirement_text = ?;", (req_hash, query_text))
+
+            # 2. Delete messages and session
             cursor.execute("DELETE FROM chat_messages WHERE chat_id = ?;", (chat_id,))
             cursor.execute("DELETE FROM chat_sessions WHERE chat_id = ?;", (chat_id,))
             conn.commit()

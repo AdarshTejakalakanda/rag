@@ -73,6 +73,13 @@ class RAGCoveragePipeline:
         self.watcher: Optional[FeatureRepositoryWatcher] = None
         self._indexed_scenarios_count = 0
 
+        # Pre-warm local neural models at startup so chat/retrieval is sub-second
+        try:
+            self.embedding_model._load_model()
+            self.reranker._load_model()
+        except Exception:
+            pass
+
         # Auto-register repos from config if available
         if self.config.repositories:
             for repo_cfg in self.config.repositories:
@@ -321,7 +328,7 @@ class RAGCoveragePipeline:
             session_name=session_name,
         )
 
-    def chat(self, message: str, repo_id: str = "default", chat_id: Optional[str] = None) -> Dict[str, Any]:
+    def chat(self, message: str, repo_id: str = "default", chat_id: Optional[str] = None, bypass_cache: bool = False) -> Dict[str, Any]:
         """Conversational RAG QA with grounded scenario citations and index state guard."""
         idx_status = self.state_db.get_repo_indexing_status(repo_id)
         if idx_status.get("index_status") == "INDEXING":
@@ -330,7 +337,7 @@ class RAGCoveragePipeline:
                 f"Repository '{repo_id}' is currently indexing{file_info} [{idx_status.get('indexing_progress_pct', 0)}%]. "
                 "Analysis will be available as soon as repository indexing completes."
             )
-        return self.chat_engine.chat(user_message=message, repo_id=repo_id, chat_id=chat_id)
+        return self.chat_engine.chat(user_message=message, repo_id=repo_id, chat_id=chat_id, bypass_cache=bypass_cache)
 
     def start_watcher(self, feature_dir: Optional[str or Path] = None, repo_id: str = "default", blocking: bool = False) -> FeatureRepositoryWatcher:
         """Starts real-time filesystem watcher for automatic incremental reindexing."""

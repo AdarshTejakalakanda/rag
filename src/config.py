@@ -62,7 +62,7 @@ class BM25Config(BaseModel):
 
 
 class GeminiConfig(BaseModel):
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.5-flash-lite"
     api_key_env: str = "GEMINI_API_KEY"
 
 

@@ -54,13 +54,14 @@ class RAGChatEngine:
         self.state_db = state_db
         self.llm_client = llm_client or LLMClient()
 
-    def chat(
+    def chat_stream(
         self,
         user_message: str,
         repo_id: str = "default",
         chat_id: Optional[str] = None,
+        bypass_cache: bool = False,
     ):
-        """Processes a chat turn scoped to a repository with Anthropic-style agentic retry & telemetry trace."""
+        """Yields real-time execution progress events and final grounded answer."""
         start_time = time.time()
         stages: List[Dict[str, Any]] = []
 
@@ -70,28 +71,37 @@ class RAGChatEngine:
                 title=f"Chat: {user_message[:40]}"
             )
 
-        # 1. Retrieve Top 50 BM25 + Top 50 Dense Candidates (Cached Pool)
+        # 1. Sparse + Dense Retrieval
+        yield {
+            "type": "stage_start",
+            "stage_id": "retrieve",
+            "name": "Sparse + Dense Search",
+            "detail": "Querying Sparse BM25 + Dense Milvus (Top 50 candidate pools)...",
+        }
         t0 = time.time()
         candidates, retrieval_pool = self.retriever.retrieve_with_pool(query=user_message, repo_id=repo_id)
+        dur_retrieve = int((time.time() - t0) * 1000)
         bm25_count = len(retrieval_pool.get("bm25_hits", []))
         dense_count = len(retrieval_pool.get("dense_hits", []))
-        dur_retrieve = int((time.time() - t0) * 1000)
 
-        stages.append({
+        stage_retrieve = {
             "id": "retrieve",
             "name": "Sparse + Dense Search",
             "detail": f"Retrieved {bm25_count} BM25 + {dense_count} Milvus candidates into memory pool",
             "status": "completed",
             "duration_ms": max(dur_retrieve, 12),
-        })
+        }
+        stages.append(stage_retrieve)
+        yield {"type": "stage_end", "stage": stage_retrieve}
 
-        stages.append({
-            "id": "fuse",
+        # 2. Balanced RRF & Cross-Encoder Reranking
+        yield {
+            "type": "stage_start",
+            "stage_id": "fuse",
             "name": "Balanced RRF & Rerank",
-            "detail": f"Balanced RRF (Top 25) ➔ Cross-Encoder precision reranking (Top {len(candidates)})",
-            "status": "completed",
-            "duration_ms": 18,
-        })
+            "detail": f"Balanced Reciprocal Rank Fusion & Cross-Encoder precision reranking (Top {len(candidates)})...",
+        }
+        t_rerank = time.time()
 
         # Format candidates context with calibrated match percentages
         def format_context(cand_list):
@@ -124,6 +134,17 @@ class RAGChatEngine:
             return c_str, cits
 
         context_str, citations_data = format_context(candidates)
+        dur_rerank = int((time.time() - t_rerank) * 1000)
+
+        stage_fuse = {
+            "id": "fuse",
+            "name": "Balanced RRF & Rerank",
+            "detail": f"Balanced RRF (Top 25) ➔ Cross-Encoder precision reranking (Top {len(candidates)})",
+            "status": "completed",
+            "duration_ms": max(dur_rerank, 18),
+        }
+        stages.append(stage_fuse)
+        yield {"type": "stage_end", "stage": stage_fuse}
 
         # Fetch recent chat history from SQLite
         history = self.state_db.get_chat_history(chat_id)
@@ -157,14 +178,16 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
         except Exception:
             pass
 
-        cached_data = self.state_db.get_cached_judgment(
-            requirement_text=user_message,
-            candidate_ids=candidate_ids,
-            provider=self.llm_client.provider,
-            repo_id=repo_id,
-            requirement_embedding=query_embedding,
-            similarity_threshold=0.88,
-        )
+        cached_data = None
+        if not bypass_cache:
+            cached_data = self.state_db.get_cached_judgment(
+                requirement_text=user_message,
+                candidate_ids=candidate_ids,
+                provider=self.llm_client.provider,
+                repo_id=repo_id,
+                requirement_embedding=query_embedding,
+                similarity_threshold=0.88,
+            )
 
         was_retried = False
         retry_strategy = "NONE"
@@ -175,15 +198,23 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
             reply_text = cached_data["reply"]
             cached_hit = True
             llm_calls_count = 0
-            stages.append({
+            stage_cache = {
                 "id": "cache",
                 "name": "Semantic Cache Hit",
                 "detail": "Instant sub-millisecond retrieval from SQLite semantic cache",
                 "status": "completed",
                 "duration_ms": 2,
-            })
+            }
+            stages.append(stage_cache)
+            yield {"type": "stage_end", "stage": stage_cache}
         else:
-            # LLM Judge - Call 1
+            # Stage 3: LLM Judge - Call 1
+            yield {
+                "type": "stage_start",
+                "stage_id": "judge_1",
+                "name": "LLM Verification & Criteria Grounding (Call 1)...",
+                "detail": f"Evaluating requirement against top {len(candidates)} candidate scenarios in repo '{repo_id}'...",
+            }
             t_call1 = time.time()
             reply_text = self.llm_client.generate_text(
                 system_prompt=CHATBOT_SYSTEM_PROMPT,
@@ -208,16 +239,24 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
                 retry_strategy = "LEXICAL_HEAVY"
                 retry_reason = "Initial candidates lacked specific keyword/action step matches."
 
-            stages.append({
+            stage_judge_1 = {
                 "id": "judge_1",
                 "name": "LLM Grounded Evaluation (Call 1)",
                 "detail": f"Sufficiency: {'INSUFFICIENT_EVIDENCE' if needs_retry else 'SUFFICIENT_EVIDENCE'} · Strategy: {retry_strategy}",
                 "status": "completed",
                 "duration_ms": dur_call1,
-            })
+            }
+            stages.append(stage_judge_1)
+            yield {"type": "stage_end", "stage": stage_judge_1}
 
             # Controlled Agentic Retry (if needed)
             if needs_retry and retrieval_pool:
+                yield {
+                    "type": "stage_start",
+                    "stage_id": "retry",
+                    "name": f"Executing Controlled Retry ({retry_strategy})...",
+                    "detail": f"Re-weighting cached pool {list(self.retriever.config.lexical_heavy_weights)} to surface new candidates...",
+                }
                 t_retry = time.time()
                 retry_candidates = self.retriever.retry_with_strategy(retrieval_pool, strategy=retry_strategy)
                 dur_retry = int((time.time() - t_retry) * 1000)
@@ -230,15 +269,23 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
                     was_retried = True
                     llm_calls_count = 2
 
-                    stages.append({
+                    stage_retry = {
                         "id": "retry",
                         "name": f"Controlled Retry: {retry_strategy}",
                         "detail": f"Re-weighted cached pool {list(self.retriever.config.lexical_heavy_weights)} ➔ Surfaced {new_count} new candidate(s)",
                         "status": "completed",
                         "duration_ms": max(dur_retry, 15),
-                    })
+                    }
+                    stages.append(stage_retry)
+                    yield {"type": "stage_end", "stage": stage_retry}
 
-                    # LLM Judge - Call 2 with revised Top 10
+                    # Stage 4: LLM Judge - Call 2 with revised Top 10
+                    yield {
+                        "type": "stage_start",
+                        "stage_id": "judge_2",
+                        "name": "Final Grounded Evaluation (Call 2)...",
+                        "detail": f"Evaluating revised Top {len(retry_candidates)} candidates with set-union criteria...",
+                    }
                     t_call2 = time.time()
                     retry_context_str, retry_citations = format_context(retry_candidates)
                     retry_reply = self.llm_client.generate_text(
@@ -252,13 +299,15 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
                         candidates = retry_candidates
                         citations_data = retry_citations
 
-                    stages.append({
+                    stage_judge_2 = {
                         "id": "judge_2",
                         "name": "Final Grounded Evaluation (Call 2)",
                         "detail": f"Evaluated revised Top {len(candidates)} candidates with set-union criteria",
                         "status": "completed",
                         "duration_ms": dur_call2,
-                    })
+                    }
+                    stages.append(stage_judge_2)
+                    yield {"type": "stage_end", "stage": stage_judge_2}
 
             if not reply_text or not reply_text.strip():
                 if candidates:
@@ -313,14 +362,6 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
             # Sort citations: cited scenarios first, then by match_percentage descending
             citations_data.sort(key=lambda x: (1 if x.get("is_cited") else 0, x.get("match_percentage", 0)), reverse=True)
 
-        # Record assistant reply in SQLite
-        self.state_db.add_chat_message(
-            chat_id=chat_id,
-            role="assistant",
-            content=reply_text,
-            citations=citations_data,
-        )
-
         total_dur_ms = int((time.time() - start_time) * 1000)
 
         agent_trace = {
@@ -334,12 +375,51 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
             "cached": cached_hit,
         }
 
-        return {
+        # Record assistant reply in SQLite (including persistent agent_trace)
+        self.state_db.add_chat_message(
+            chat_id=chat_id,
+            role="assistant",
+            content=reply_text,
+            citations=citations_data,
+            agent_trace=agent_trace,
+        )
+
+        yield {
+            "type": "done",
             "chat_id": chat_id,
             "repo_id": repo_id,
             "reply": reply_text,
             "citations": citations_data,
             "cached": cached_hit,
             "agent_trace": agent_trace,
+            "raw_evaluation": None,
+        }
+
+    def chat(
+        self,
+        user_message: str,
+        repo_id: str = "default",
+        chat_id: Optional[str] = None,
+        bypass_cache: bool = False,
+    ) -> Dict[str, Any]:
+        """Synchronous chat turn wrapper over chat_stream."""
+        final_res = None
+        for evt in self.chat_stream(
+            user_message=user_message,
+            repo_id=repo_id,
+            chat_id=chat_id,
+            bypass_cache=bypass_cache,
+        ):
+            if evt.get("type") == "done":
+                final_res = evt
+        if not final_res:
+            raise RuntimeError("Chat execution failed to produce a final response.")
+        return {
+            "chat_id": final_res["chat_id"],
+            "repo_id": final_res["repo_id"],
+            "reply": final_res["reply"],
+            "citations": final_res["citations"],
+            "cached": final_res["cached"],
+            "agent_trace": final_res["agent_trace"],
             "raw_evaluation": None,
         }

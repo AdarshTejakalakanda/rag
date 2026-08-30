@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Optional, List, Any
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -106,6 +106,7 @@ class ChatRequest(BaseModel):
     message: str
     repo_id: str = "repo_1"
     chat_id: Optional[str] = None
+    bypass_cache: bool = False
 
 
 class NewChatSessionRequest(BaseModel):
@@ -331,11 +332,44 @@ async def clear_all_chat_sessions(repo_id: Optional[str] = None):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.delete("/api/cache/{repo_id}")
+async def clear_repo_cache(repo_id: str):
+    p = get_pipeline()
+    try:
+        p.state_db.clear_semantic_cache(repo_id=repo_id)
+        return {"status": "success", "message": f"Semantic judgment cache cleared for repository '{repo_id}'"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/api/chat-history/{chat_id}")
 async def get_chat_history(chat_id: str):
     p = get_pipeline()
     history = p.state_db.get_chat_history(chat_id)
     return {"status": "success", "chat_id": chat_id, "messages": history}
+
+
+@app.post("/api/chat/stream")
+async def handle_chat_stream(req: ChatRequest):
+    p = get_pipeline()
+    idx_status = p.state_db.get_repo_indexing_status(req.repo_id)
+    if idx_status.get("index_status") == "INDEXING":
+        file_info = f" ({idx_status.get('current_indexing_file')})" if idx_status.get('current_indexing_file') else ""
+        raise HTTPException(
+            status_code=423,
+            detail=f"Repository '{req.repo_id}' is currently indexing{file_info}. Please wait until indexing completes."
+        )
+
+    def event_generator():
+        for event in p.chat_engine.chat_stream(
+            user_message=req.message,
+            repo_id=req.repo_id,
+            chat_id=req.chat_id,
+            bypass_cache=req.bypass_cache,
+        ):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.post("/api/chat")
@@ -349,7 +383,12 @@ async def handle_chat(req: ChatRequest):
             detail=f"Repository '{req.repo_id}' is currently indexing{file_info}. Please wait until indexing completes."
         )
     try:
-        res = p.chat(message=req.message, repo_id=req.repo_id, chat_id=req.chat_id)
+        res = p.chat(
+            message=req.message,
+            repo_id=req.repo_id,
+            chat_id=req.chat_id,
+            bypass_cache=req.bypass_cache,
+        )
         return {
             "status": "success",
             "chat_id": res["chat_id"],
@@ -1006,22 +1045,64 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     .live-step-list {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
     }
     .live-step-item {
       display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      animation: stepFadeIn 0.3s ease-out;
+      transition: all 0.2s ease;
+    }
+    .live-step-header {
+      display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 10px;
       font-size: 12.5px;
       color: #94a3b8;
-      animation: stepFadeIn 0.3s ease-out;
+    }
+    .live-step-left {
+      display: flex;
+      align-items: center;
+      gap: 9px;
     }
     .live-step-item.active {
+      background: rgba(56, 189, 248, 0.07);
+      border-color: rgba(56, 189, 248, 0.3);
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.1);
+    }
+    .live-step-item.active .live-step-header {
       color: #f8fafc;
       font-weight: 600;
     }
     .live-step-item.completed {
+      background: rgba(34, 197, 94, 0.03);
+      border-color: rgba(34, 197, 94, 0.18);
+    }
+    .live-step-item.completed .live-step-header {
+      color: #e2e8f0;
+    }
+    .live-step-detail {
+      font-size: 11px;
+      color: #64748b;
+      padding-left: 27px;
+      font-family: 'Fira Code', monospace;
+    }
+    .live-step-item.active .live-step-detail {
       color: #38bdf8;
+    }
+    .live-step-dur {
+      font-size: 11px;
+      font-family: 'Fira Code', monospace;
+      color: #64748b;
+    }
+    .live-step-item.completed .live-step-dur {
+      color: #4ade80;
     }
     .step-indicator-icon {
       width: 18px;
@@ -1800,7 +1881,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         if (m.role === 'user') {
           addUserMessage(m.content);
         } else {
-          addAssistantMessage(m.content, m.citations);
+          const isCached = m.cached || (m.agent_trace && m.agent_trace.cached) || false;
+          addAssistantMessage(m.content, m.citations, isCached, m.agent_trace);
           if (m.citations && m.citations.length > 0) lastCitations = m.citations;
         }
       });
@@ -1815,13 +1897,17 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     async function clearAllChatSessions() {
-      if (!confirm('Clear all chat sessions for this repository?')) return;
-      await fetch('/api/chat-sessions/clear?repo_id=' + encodeURIComponent(activeRepoId), { method: 'DELETE' });
-      activeChatId = null;
-      createNewChatSession();
+      if (!confirm(`Clear all chat sessions and reset cache for repository '${activeRepoId}'?`)) return;
+      try {
+        await fetch('/api/chat-sessions/clear?repo_id=' + encodeURIComponent(activeRepoId), { method: 'DELETE' });
+        activeChatId = null;
+        createNewChatSession();
+      } catch (err) {
+        alert('Error clearing sessions: ' + err);
+      }
     }
 
-    // ==================== ANTHROPIC-STYLE AGENT THOUGHT & RETRY LOOP JS ====================
+    // ==================== ANTHROPIC-STYLE REAL-TIME STREAMING AGENT LOOP ====================
 
     let liveThinkingTimer = null;
     let liveThinkingStart = 0;
@@ -1839,33 +1925,12 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             <div class="anthropic-spinner-ring">
               <div class="anthropic-spinner-center"></div>
             </div>
-            <span class="live-agent-badge"><i data-lucide="sparkles" style="width: 12px; height: 12px;"></i> Agentic Verification Active</span>
-            <span class="shimmer-text" style="font-size: 12px; font-weight: 600;">Evaluating requirement against repository...</span>
+            <span class="live-agent-badge"><i data-lucide="sparkles" style="width: 12px; height: 12px;"></i> Live Agentic Execution</span>
+            <span id="liveStatusShimmer" class="shimmer-text" style="font-size: 12px; font-weight: 600;">Initializing verification pipeline...</span>
           </div>
           <span id="liveElapsedTimer" style="font-size: 11px; color: #64748b; font-family: 'Fira Code', monospace;">0.0s</span>
         </div>
-        <div class="live-step-list">
-          <div class="live-step-item active" id="liveStep1">
-            <div class="step-indicator-icon"><i data-lucide="search" style="width: 11px; height: 11px;"></i></div>
-            <span>Querying Sparse BM25 + Dense Milvus (Top 50 candidate pools)...</span>
-          </div>
-          <div class="live-step-item" id="liveStep2">
-            <div class="step-indicator-icon"><i data-lucide="scale" style="width: 11px; height: 11px;"></i></div>
-            <span>Balanced Reciprocal Rank Fusion & Cross-Encoder precision reranking...</span>
-          </div>
-          <div class="live-step-item" id="liveStep3">
-            <div class="step-indicator-icon"><i data-lucide="cpu" style="width: 11px; height: 11px;"></i></div>
-            <span>LLM Retrieval Sufficiency & Criteria Grounding (Call 1)...</span>
-          </div>
-          <div class="live-step-item" id="liveStep4">
-            <div class="step-indicator-icon"><i data-lucide="refresh-cw" style="width: 11px; height: 11px;"></i></div>
-            <span>Checking Controlled Weighted-RRF Retry Loop...</span>
-          </div>
-          <div class="live-step-item" id="liveStep5">
-            <div class="step-indicator-icon"><i data-lucide="check-circle-2" style="width: 11px; height: 11px;"></i></div>
-            <span>Assembling Grounded Set-Union Coverage & Citations...</span>
-          </div>
-        </div>
+        <div class="live-step-list" id="liveStepList"></div>
       `;
 
       box.appendChild(div);
@@ -1877,38 +1942,68 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         const elapsed = ((Date.now() - liveThinkingStart) / 1000).toFixed(1);
         const timerEl = document.getElementById('liveElapsedTimer');
         if (timerEl) timerEl.textContent = `${elapsed}s`;
-
-        const s1 = document.getElementById('liveStep1');
-        const s2 = document.getElementById('liveStep2');
-        const s3 = document.getElementById('liveStep3');
-        const s4 = document.getElementById('liveStep4');
-        const s5 = document.getElementById('liveStep5');
-
-        if (elapsed >= 0.4 && s1 && s2 && !s1.classList.contains('completed')) {
-          s1.className = 'live-step-item completed';
-          s1.querySelector('.step-indicator-icon').innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px;"></i>';
-          s2.className = 'live-step-item active';
-          refreshIcons(s1);
-        }
-        if (elapsed >= 0.9 && s2 && s3 && !s2.classList.contains('completed')) {
-          s2.className = 'live-step-item completed';
-          s2.querySelector('.step-indicator-icon').innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px;"></i>';
-          s3.className = 'live-step-item active';
-          refreshIcons(s2);
-        }
-        if (elapsed >= 1.7 && s3 && s4 && !s3.classList.contains('completed')) {
-          s3.className = 'live-step-item completed';
-          s3.querySelector('.step-indicator-icon').innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px;"></i>';
-          s4.className = 'live-step-item active';
-          refreshIcons(s3);
-        }
-        if (elapsed >= 2.5 && s4 && s5 && !s4.classList.contains('completed')) {
-          s4.className = 'live-step-item completed';
-          s4.querySelector('.step-indicator-icon').innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px;"></i>';
-          s5.className = 'live-step-item active';
-          refreshIcons(s4);
-        }
       }, 100);
+    }
+
+    function handleLiveAgentEvent(evt) {
+      const stepList = document.getElementById('liveStepList');
+      const shimmerEl = document.getElementById('liveStatusShimmer');
+      if (!stepList) return;
+
+      if (evt.type === 'stage_start') {
+        if (shimmerEl) shimmerEl.textContent = evt.name || 'Processing...';
+
+        // Mark any currently active steps as completed (if not already completed)
+        stepList.querySelectorAll('.live-step-item.active').forEach(el => {
+          el.className = 'live-step-item completed';
+          const icon = el.querySelector('.step-indicator-icon');
+          if (icon) icon.innerHTML = '<i data-lucide="check" style="width: 11px; height: 11px; color: #4ade80;"></i>';
+        });
+
+        // Add or activate this step
+        let stepEl = document.getElementById('liveStage_' + evt.stage_id);
+        if (!stepEl) {
+          stepEl = document.createElement('div');
+          stepEl.id = 'liveStage_' + evt.stage_id;
+          stepList.appendChild(stepEl);
+        }
+        stepEl.className = 'live-step-item active';
+        stepEl.innerHTML = `
+          <div class="live-step-header">
+            <div class="live-step-left">
+              <div class="step-indicator-icon"><i data-lucide="loader-2" class="spin-icon" style="width: 11px; height: 11px; color: var(--accent);"></i></div>
+              <span>${escapeHtml(evt.name)}</span>
+            </div>
+            <span class="live-step-dur" id="dur_${evt.stage_id}">active</span>
+          </div>
+          ${evt.detail ? `<div class="live-step-detail">${escapeHtml(evt.detail)}</div>` : ''}
+        `;
+        refreshIcons(stepEl);
+        const box = document.getElementById('chatMessages');
+        if (box) box.scrollTop = box.scrollHeight;
+      } else if (evt.type === 'stage_end' && evt.stage) {
+        let stepEl = document.getElementById('liveStage_' + evt.stage.id);
+        if (!stepEl) {
+          stepEl = document.createElement('div');
+          stepEl.id = 'liveStage_' + evt.stage.id;
+          stepList.appendChild(stepEl);
+        }
+        stepEl.className = 'live-step-item completed';
+        const durText = evt.stage.duration_ms !== undefined ? `${evt.stage.duration_ms}ms` : '';
+        stepEl.innerHTML = `
+          <div class="live-step-header">
+            <div class="live-step-left">
+              <div class="step-indicator-icon"><i data-lucide="check" style="width: 11px; height: 11px; color: #4ade80;"></i></div>
+              <span>${escapeHtml(evt.stage.name)}</span>
+            </div>
+            <span class="live-step-dur">${durText}</span>
+          </div>
+          ${evt.stage.detail ? `<div class="live-step-detail">${escapeHtml(evt.stage.detail)}</div>` : ''}
+        `;
+        refreshIcons(stepEl);
+        const box = document.getElementById('chatMessages');
+        if (box) box.scrollTop = box.scrollHeight;
+      }
     }
 
     function removeLiveAgentThinking() {
@@ -1990,17 +2085,55 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       showLiveAgentThinking();
 
       try {
-        const res = await fetch('/api/chat', {
+        const response = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: msg, repo_id: activeRepoId, chat_id: activeChatId })
+          body: JSON.stringify({
+            message: msg,
+            repo_id: activeRepoId,
+            chat_id: activeChatId
+          })
         });
-        const data = await res.json();
-        removeLiveAgentThinking();
-        activeChatId = data.chat_id;
-        addAssistantMessage(data.reply, data.citations, data.cached, data.agent_trace);
-        renderCitationsSidebar(data.citations);
-        loadChatSessions();
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({ detail: response.statusText }));
+          removeLiveAgentThinking();
+          addAssistantMessage('Error: ' + (errData.detail || response.statusText));
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data: ')) {
+              const dataStr = trimmed.slice(6);
+              try {
+                const evt = JSON.parse(dataStr);
+                if (evt.type === 'done') {
+                  removeLiveAgentThinking();
+                  activeChatId = evt.chat_id;
+                  addAssistantMessage(evt.reply, evt.citations, evt.cached, evt.agent_trace);
+                  renderCitationsSidebar(evt.citations);
+                  loadChatSessions();
+                } else {
+                  handleLiveAgentEvent(evt);
+                }
+              } catch (e) {
+                console.error('Error parsing SSE event', e);
+              }
+            }
+          }
+        }
       } catch (err) {
         removeLiveAgentThinking();
         addAssistantMessage('Error communicating with backend: ' + err);
