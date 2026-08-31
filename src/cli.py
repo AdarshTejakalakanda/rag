@@ -184,7 +184,7 @@ def handle_serve(args):
     print_banner()
     import uvicorn
     console.print(f"[bold green]Starting Web UI & API server on http://{args.host}:{args.port}[/bold green]")
-    uvicorn.run("src.web.app:app", host=args.host, port=args.port, reload=False)
+    uvicorn.run("src.web.app:app", host=args.host, port=args.port, reload=True)
 
 
 def handle_sessions(args):

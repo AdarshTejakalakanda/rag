@@ -73,6 +73,13 @@ class RAGCoveragePipeline:
         self.watcher: Optional[FeatureRepositoryWatcher] = None
         self._indexed_scenarios_count = 0
 
+        # Pre-warm local neural models at startup so chat/retrieval is sub-second
+        try:
+            self.embedding_model._load_model()
+            self.reranker._load_model()
+        except Exception:
+            pass
+
         # Auto-register repos from config if available
         if self.config.repositories:
             for repo_cfg in self.config.repositories:
@@ -83,6 +90,34 @@ class RAGCoveragePipeline:
                         repo_id=repo_cfg.id,
                         branch=repo_cfg.branch,
                     )
+
+        # Initial synchronization of BM25 with all scenarios in state database
+        self.sync_bm25_index()
+        # Backfill any missing vector embeddings for all repositories
+        self.ensure_all_embedded()
+
+    def sync_bm25_index(self) -> int:
+        """Loads all scenarios across all repositories into the BM25 index."""
+        all_global = self.state_db.get_all_scenarios()
+        self.bm25_index.index_scenarios(all_global)
+        self._indexed_scenarios_count = len(all_global)
+        return len(all_global)
+
+    def ensure_all_embedded(self) -> int:
+        """Ensures that all scenarios stored in SQLite across all repositories have embeddings in MilvusStore."""
+        total_embedded = 0
+        for repo in self.state_db.list_repos():
+            rid = repo["repo_id"]
+            scenarios = self.state_db.get_all_scenarios(repo_id=rid)
+            if scenarios:
+                m_count = self.milvus_store.count(repo_id=rid)
+                if m_count < len(scenarios):
+                    print(f"[Pipeline] Backfilling embeddings for repo '{rid}' ({m_count}/{len(scenarios)} embedded)...")
+                    texts = [s.canonical_text for s in scenarios]
+                    embeddings = self.embedding_model.encode(texts)
+                    self.milvus_store.upsert(scenarios, embeddings)
+                    total_embedded += len(scenarios)
+        return total_embedded
 
     def index_features(
         self,
@@ -136,7 +171,7 @@ class RAGCoveragePipeline:
                     scenario_count=len(scenarios),
                     last_modified=mtime,
                 )
-                self.state_db.save_scenarios(scenarios)
+                self.state_db.save_scenarios(scenarios, repo_id=repo_id)
 
             # Increment integer corpus version on feature changes
             c_ver_int = self.state_db.increment_corpus_version(repo_id)
@@ -148,7 +183,7 @@ class RAGCoveragePipeline:
         all_scenarios = self.state_db.get_all_scenarios(repo_id=repo_id)
         if not all_scenarios:
             all_scenarios = GherkinParser.parse_directory(target_dir, repo_id=repo_id)
-            self.state_db.save_scenarios(all_scenarios)
+            self.state_db.save_scenarios(all_scenarios, repo_id=repo_id)
 
         # Check if vector embeddings already exist in Milvus
         milvus_count = self.milvus_store.count(repo_id=repo_id)
@@ -163,8 +198,7 @@ class RAGCoveragePipeline:
         else:
             print(f"[Pipeline] Repository '{repo_id}' up-to-date ({len(all_scenarios)} scenarios, corpus v{c_ver_int}).")
 
-        self.bm25_index.index_scenarios(all_scenarios)
-        self._indexed_scenarios_count = len(all_scenarios)
+        self.sync_bm25_index()
         self.state_db.set_repo_indexing_status(repo_id, "READY", current_file="", progress_pct=100)
         return len(all_scenarios)
 
@@ -190,7 +224,7 @@ class RAGCoveragePipeline:
                 self.state_db.set_repo_indexing_status(repo_id, "INDEXING", current_file=f_path.name, progress_pct=int(20 + (idx / len(folders)) * 50))
                 scenarios = UniversalFileParser.parse_directory(f_path, repo_id=repo_id)
                 self.state_db.update_folder_scenario_count(f["folder_id"], len(scenarios))
-                self.state_db.save_scenarios(scenarios)
+                self.state_db.save_scenarios(scenarios, repo_id=repo_id)
                 all_repo_scenarios.extend(scenarios)
 
         if all_repo_scenarios:
@@ -198,9 +232,9 @@ class RAGCoveragePipeline:
             texts = [s.canonical_text for s in all_repo_scenarios]
             embeddings = self.embedding_model.encode(texts)
             self.milvus_store.upsert(all_repo_scenarios, embeddings)
-            self.bm25_index.index_scenarios(all_repo_scenarios)
             self.state_db.increment_corpus_version(repo_id)
 
+        self.sync_bm25_index()
         self.state_db.set_repo_indexing_status(repo_id, "READY", current_file="", progress_pct=100)
         return len(all_repo_scenarios)
 
@@ -321,7 +355,7 @@ class RAGCoveragePipeline:
             session_name=session_name,
         )
 
-    def chat(self, message: str, repo_id: str = "default", chat_id: Optional[str] = None) -> Dict[str, Any]:
+    def chat(self, message: str, repo_id: str = "default", chat_id: Optional[str] = None, bypass_cache: bool = False) -> Dict[str, Any]:
         """Conversational RAG QA with grounded scenario citations and index state guard."""
         idx_status = self.state_db.get_repo_indexing_status(repo_id)
         if idx_status.get("index_status") == "INDEXING":
@@ -330,7 +364,7 @@ class RAGCoveragePipeline:
                 f"Repository '{repo_id}' is currently indexing{file_info} [{idx_status.get('indexing_progress_pct', 0)}%]. "
                 "Analysis will be available as soon as repository indexing completes."
             )
-        return self.chat_engine.chat(user_message=message, repo_id=repo_id, chat_id=chat_id)
+        return self.chat_engine.chat(user_message=message, repo_id=repo_id, chat_id=chat_id, bypass_cache=bypass_cache)
 
     def start_watcher(self, feature_dir: Optional[str or Path] = None, repo_id: str = "default", blocking: bool = False) -> FeatureRepositoryWatcher:
         """Starts real-time filesystem watcher for automatic incremental reindexing."""

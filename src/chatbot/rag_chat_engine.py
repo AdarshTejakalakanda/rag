@@ -11,18 +11,33 @@ from src.storage.state_db import StateDatabase
 from src.config import JudgeConfig
 
 
-CHATBOT_SYSTEM_PROMPT = """You are an expert BDD & Gherkin Test Coverage Assistant.
-You help engineers and product managers analyze requirement coverage against automated Gherkin (.feature) test suites in a specific repository.
+CHATBOT_SYSTEM_PROMPT = """You are an expert BDD & Gherkin Test Coverage Verifier.
+Your sole responsibility is to evaluate whether a given business requirement is implemented in the repository's automated test suite, citing only grounded evidence from the retrieved Gherkin scenarios.
 
-Always structure your answer clearly with:
-1. **Coverage Assessment & Match Percentage**:
-   - Status: `Covered (100%)` | `Partially Covered (XX%)` | `Not Covered / Gap (0%)`
-   - Explicitly include the estimated Coverage Match Percentage (e.g. `Coverage: Partially Covered (75%)` or `Coverage: Fully Covered (100%)`).
-2. **Analysis & Grounded Evidence**:
-   - Reference the retrieved Gherkin scenarios with Feature title, Scenario name, and File:Line citations.
-   - Explain what specific acceptance criteria are verified.
-3. **Identified Test Gaps & Concrete Gherkin Steps**:
-   - If coverage is < 100%, provide ready-to-use Gherkin `Scenario:` examples to fill the missing gaps.
+CRITICAL ROLE BOUNDARIES:
+- You are a COVERAGE VERIFIER, NOT a test designer or test generator.
+- DO NOT generate new Gherkin scenarios, steps, or code blocks.
+- DO NOT suggest what tests the team should write or how to achieve 100% coverage.
+- Report strictly what exists in the repository with exact citations. If evidence is missing, simply state what is not represented without designing hypothetical tests.
+
+OUTPUT FORMAT:
+
+### 1. Coverage Assessment & Match Percentage
+* **Status**: `Fully Covered (100%)` | `Partially Covered (XX%)` | `Not Covered (0%)`
+* **Coverage**: `[Status] ([Percentage]%)`
+
+### 2. Grounded Evidence & Verified Scenarios
+For each relevant retrieved scenario that provides evidence:
+* **Feature**: `<Feature Title>`
+* **Scenario**: `<Scenario Name>` (`<filename>:<line>`)
+* **Match**: `<Percentage>%`
+* **Verified Evidence**: State precisely what acceptance criteria / steps are verified by this scenario.
+
+If the requirement is PARTIALLY COVERED:
+State clearly what subset of the requirement is verified and what is not represented in the existing automated scenarios (without suggesting how to write new tests).
+
+If the requirement is NOT COVERED:
+State clearly: "No relevant automated test scenario was found in the repository for this requirement. Retrieved candidates were evaluated and found to be unrelated."
 """
 
 
@@ -39,13 +54,14 @@ class RAGChatEngine:
         self.state_db = state_db
         self.llm_client = llm_client or LLMClient()
 
-    def chat(
+    def chat_stream(
         self,
         user_message: str,
         repo_id: str = "default",
         chat_id: Optional[str] = None,
+        bypass_cache: bool = False,
     ):
-        """Processes a chat turn scoped to a repository with Anthropic-style agentic retry & telemetry trace."""
+        """Yields real-time execution progress events and final grounded answer."""
         start_time = time.time()
         stages: List[Dict[str, Any]] = []
 
@@ -55,45 +71,55 @@ class RAGChatEngine:
                 title=f"Chat: {user_message[:40]}"
             )
 
-        # 1. Retrieve Top 50 BM25 + Top 50 Dense Candidates (Cached Pool)
+        # 1. Sparse + Dense Retrieval
+        yield {
+            "type": "stage_start",
+            "stage_id": "retrieve",
+            "name": "Sparse + Dense Search",
+            "detail": "Querying Sparse BM25 + Dense Milvus (Top 50 candidate pools)...",
+        }
         t0 = time.time()
         candidates, retrieval_pool = self.retriever.retrieve_with_pool(query=user_message, repo_id=repo_id)
+        dur_retrieve = int((time.time() - t0) * 1000)
         bm25_count = len(retrieval_pool.get("bm25_hits", []))
         dense_count = len(retrieval_pool.get("dense_hits", []))
-        dur_retrieve = int((time.time() - t0) * 1000)
 
-        stages.append({
+        stage_retrieve = {
             "id": "retrieve",
             "name": "Sparse + Dense Search",
             "detail": f"Retrieved {bm25_count} BM25 + {dense_count} Milvus candidates into memory pool",
             "status": "completed",
             "duration_ms": max(dur_retrieve, 12),
-        })
+        }
+        stages.append(stage_retrieve)
+        yield {"type": "stage_end", "stage": stage_retrieve}
 
-        stages.append({
-            "id": "fuse",
+        # 2. Balanced RRF & Cross-Encoder Reranking
+        yield {
+            "type": "stage_start",
+            "stage_id": "fuse",
             "name": "Balanced RRF & Rerank",
-            "detail": f"Balanced RRF (Top 25) ➔ Cross-Encoder precision reranking (Top {len(candidates)})",
-            "status": "completed",
-            "duration_ms": 18,
-        })
+            "detail": f"Balanced Reciprocal Rank Fusion & Cross-Encoder precision reranking (Top {len(candidates)})...",
+        }
+        t_rerank = time.time()
 
-        # Format candidates context with calibrated match percentages
+        # Format candidates context for LLM Judge
         def format_context(cand_list):
             lines = []
             cits = []
             for idx, (sc, score, meta) in enumerate(cand_list, start=1):
-                try:
-                    score_val = float(score)
-                    match_pct = round((1.0 / (1.0 + math.exp(-score_val))) * 100.0, 1)
-                except Exception:
-                    match_pct = 50.0
+                steps = sc.steps or []
+                if not steps and sc.raw_gherkin:
+                    steps = [l.strip() for l in sc.raw_gherkin.splitlines() if any(l.strip().startswith(kw) for kw in ("Given ", "When ", "Then ", "And ", "But ", "* "))]
+                if not steps and sc.canonical_text:
+                    steps = [l.strip() for l in sc.canonical_text.splitlines() if l.strip()]
+
+                steps_str = "\n".join(f"      {st}" for st in steps[:10]) if steps else "      (No explicit steps recorded)"
 
                 lines.append(
                     f"[{idx}] Feature: {sc.feature_title}\n"
                     f"    Scenario: {sc.scenario_name} ({Path(sc.file_path).name}:{sc.line_number})\n"
-                    f"    Relevance Match: {match_pct}%\n"
-                    f"    Steps:\n" + "\n".join(f"      {st}" for st in sc.steps[:5])
+                    f"    Steps:\n{steps_str}"
                 )
                 cits.append({
                     "scenario_id": sc.scenario_id,
@@ -101,20 +127,49 @@ class RAGChatEngine:
                     "feature_title": sc.feature_title,
                     "file_path": sc.file_path,
                     "line_number": sc.line_number,
-                    "score": float(score),
-                    "match_percentage": match_pct,
+                    "retrieval_relevance_score": float(score),
+                    "coverage_percentage": 0.0,
+                    "match_percentage": 0.0,
+                    "is_cited": False,
                     "repo_id": sc.repo_id,
                 })
             c_str = "\n\n".join(lines) if lines else "No matching test scenarios found in repository."
             return c_str, cits
 
         context_str, citations_data = format_context(candidates)
+        dur_rerank = int((time.time() - t_rerank) * 1000)
+
+        stage_fuse = {
+            "id": "fuse",
+            "name": "Balanced RRF & Rerank",
+            "detail": f"Balanced RRF (Top 25) ➔ Cross-Encoder precision reranking (Top {len(candidates)})",
+            "status": "completed",
+            "duration_ms": max(dur_rerank, 18),
+        }
+        stages.append(stage_fuse)
+        yield {"type": "stage_end", "stage": stage_fuse}
 
         # Fetch recent chat history from SQLite
         history = self.state_db.get_chat_history(chat_id)
         history_snippet = "\n".join(f"{h['role'].upper()}: {h['content']}" for h in history[-4:])
 
         def build_prompt(c_str):
+            if not candidates:
+                return f"""Target Repository ID: {repo_id}
+
+RECENT CONVERSATION:
+{history_snippet}
+
+RETRIEVED GHERKIN SCENARIOS FROM REPOSITORY:
+No matching test scenarios found in repository '{repo_id}' (0 candidates retrieved).
+
+REQUIREMENT / INQUIRY TO VERIFY:
+{user_message}
+
+Please evaluate the requirement strictly against the repository. Since zero candidate scenarios match in repository '{repo_id}', clearly report:
+1. Coverage Status: Not Covered / Gap (0%)
+2. Explanation: State clearly that no automated scenarios matching this requirement were found in repository '{repo_id}'. Do NOT invent citations or fabricate test steps."""
+
             return f"""Target Repository ID: {repo_id}
 
 RECENT CONVERSATION:
@@ -123,10 +178,10 @@ RECENT CONVERSATION:
 RETRIEVED GHERKIN SCENARIOS FROM REPOSITORY (with quantitative relevance match):
 {c_str}
 
-USER QUESTION / REQUIREMENT:
+REQUIREMENT / INQUIRY TO VERIFY:
 {user_message}
 
-Please provide a helpful, concise answer based on the retrieved scenarios above, including explicit Coverage Status & Match Percentage (e.g. 'Coverage: Partially Covered (75%)'):"""
+Please evaluate the requirement strictly against the retrieved Gherkin scenarios above, providing explicit Coverage Status, Match Percentage, and Grounded Evidence with citations. Do NOT generate new test code or suggestions."""
 
         # Record user message in SQLite
         self.state_db.add_chat_message(chat_id=chat_id, role="user", content=user_message)
@@ -142,14 +197,16 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
         except Exception:
             pass
 
-        cached_data = self.state_db.get_cached_judgment(
-            requirement_text=user_message,
-            candidate_ids=candidate_ids,
-            provider=self.llm_client.provider,
-            repo_id=repo_id,
-            requirement_embedding=query_embedding,
-            similarity_threshold=0.88,
-        )
+        cached_data = None
+        if not bypass_cache:
+            cached_data = self.state_db.get_cached_judgment(
+                requirement_text=user_message,
+                candidate_ids=candidate_ids,
+                provider=self.llm_client.provider,
+                repo_id=repo_id,
+                requirement_embedding=query_embedding,
+                similarity_threshold=0.88,
+            )
 
         was_retried = False
         retry_strategy = "NONE"
@@ -159,15 +216,24 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
         if cached_data and isinstance(cached_data, dict) and "reply" in cached_data:
             reply_text = cached_data["reply"]
             cached_hit = True
-            stages.append({
+            llm_calls_count = 0
+            stage_cache = {
                 "id": "cache",
                 "name": "Semantic Cache Hit",
                 "detail": "Instant sub-millisecond retrieval from SQLite semantic cache",
                 "status": "completed",
                 "duration_ms": 2,
-            })
+            }
+            stages.append(stage_cache)
+            yield {"type": "stage_end", "stage": stage_cache}
         else:
-            # LLM Judge - Call 1
+            # Stage 3: LLM Judge - Call 1
+            yield {
+                "type": "stage_start",
+                "stage_id": "judge_1",
+                "name": "LLM Verification & Criteria Grounding (Call 1)...",
+                "detail": f"Evaluating requirement against top {len(candidates)} candidate scenarios in repo '{repo_id}'...",
+            }
             t_call1 = time.time()
             reply_text = self.llm_client.generate_text(
                 system_prompt=CHATBOT_SYSTEM_PROMPT,
@@ -192,16 +258,31 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
                 retry_strategy = "LEXICAL_HEAVY"
                 retry_reason = "Initial candidates lacked specific keyword/action step matches."
 
-            stages.append({
+            if len(candidates) == 0:
+                sufficiency_detail = f"Sufficiency: NO_CANDIDATES · Zero matching scenarios in repo '{repo_id}'"
+            elif needs_retry:
+                sufficiency_detail = f"Sufficiency: INSUFFICIENT_EVIDENCE · Strategy: {retry_strategy}"
+            else:
+                sufficiency_detail = "Sufficiency: SUFFICIENT_EVIDENCE · Strategy: NONE"
+
+            stage_judge_1 = {
                 "id": "judge_1",
                 "name": "LLM Grounded Evaluation (Call 1)",
-                "detail": f"Sufficiency: {'INSUFFICIENT_EVIDENCE' if needs_retry else 'SUFFICIENT_EVIDENCE'} · Strategy: {retry_strategy}",
+                "detail": sufficiency_detail,
                 "status": "completed",
                 "duration_ms": dur_call1,
-            })
+            }
+            stages.append(stage_judge_1)
+            yield {"type": "stage_end", "stage": stage_judge_1}
 
             # Controlled Agentic Retry (if needed)
             if needs_retry and retrieval_pool:
+                yield {
+                    "type": "stage_start",
+                    "stage_id": "retry",
+                    "name": f"Executing Controlled Retry ({retry_strategy})...",
+                    "detail": f"Re-weighting cached pool {list(self.retriever.config.lexical_heavy_weights)} to surface new candidates...",
+                }
                 t_retry = time.time()
                 retry_candidates = self.retriever.retry_with_strategy(retrieval_pool, strategy=retry_strategy)
                 dur_retry = int((time.time() - t_retry) * 1000)
@@ -214,15 +295,23 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
                     was_retried = True
                     llm_calls_count = 2
 
-                    stages.append({
+                    stage_retry = {
                         "id": "retry",
                         "name": f"Controlled Retry: {retry_strategy}",
                         "detail": f"Re-weighted cached pool {list(self.retriever.config.lexical_heavy_weights)} ➔ Surfaced {new_count} new candidate(s)",
                         "status": "completed",
                         "duration_ms": max(dur_retry, 15),
-                    })
+                    }
+                    stages.append(stage_retry)
+                    yield {"type": "stage_end", "stage": stage_retry}
 
-                    # LLM Judge - Call 2 with revised Top 10
+                    # Stage 4: LLM Judge - Call 2 with revised Top 10
+                    yield {
+                        "type": "stage_start",
+                        "stage_id": "judge_2",
+                        "name": "Final Grounded Evaluation (Call 2)...",
+                        "detail": f"Evaluating revised Top {len(retry_candidates)} candidates with set-union criteria...",
+                    }
                     t_call2 = time.time()
                     retry_context_str, retry_citations = format_context(retry_candidates)
                     retry_reply = self.llm_client.generate_text(
@@ -236,13 +325,15 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
                         candidates = retry_candidates
                         citations_data = retry_citations
 
-                    stages.append({
+                    stage_judge_2 = {
                         "id": "judge_2",
                         "name": "Final Grounded Evaluation (Call 2)",
                         "detail": f"Evaluated revised Top {len(candidates)} candidates with set-union criteria",
                         "status": "completed",
                         "duration_ms": dur_call2,
-                    })
+                    }
+                    stages.append(stage_judge_2)
+                    yield {"type": "stage_end", "stage": stage_judge_2}
 
             if not reply_text or not reply_text.strip():
                 if candidates:
@@ -282,18 +373,37 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
                 except Exception:
                     pass
 
-        if llm_match_pct is not None and citations_data:
-            for idx, c in enumerate(citations_data):
-                if c["scenario_name"].lower() in reply_text.lower() or idx == 0:
-                    c["match_percentage"] = llm_match_pct
+        if citations_data:
+            reply_lower = reply_text.lower()
+            for c in citations_data:
+                sc_name = c["scenario_name"].lower()
+                f_name = Path(c.get("file_path", "")).name.lower()
+                is_cited = sc_name in reply_lower or (f_name and f_name in reply_lower and sc_name[:15] in reply_lower)
 
-        # Record assistant reply in SQLite
-        self.state_db.add_chat_message(
-            chat_id=chat_id,
-            role="assistant",
-            content=reply_text,
-            citations=citations_data,
-        )
+                sc_match = None
+                if is_cited:
+                    sc_pattern = rf"{re.escape(sc_name[:20])}[\s\S]*?(?:Match|Coverage)[:\s]*?(\d{{1,3}})%"
+                    m_sc = re.search(sc_pattern, reply_lower)
+                    if m_sc:
+                        try:
+                            sc_match = float(m_sc.group(1))
+                        except Exception:
+                            pass
+
+                if is_cited:
+                    assigned_pct = sc_match if sc_match is not None else (llm_match_pct if llm_match_pct is not None else 50.0)
+                    c["match_percentage"] = assigned_pct
+                    c["coverage_percentage"] = assigned_pct
+                    c["status"] = "FULL" if assigned_pct >= 90 else "PARTIAL"
+                    c["is_cited"] = True
+                else:
+                    c["match_percentage"] = 0.0
+                    c["coverage_percentage"] = 0.0
+                    c["status"] = "NOT_RELEVANT"
+                    c["is_cited"] = False
+
+            # Sort citations: cited scenarios first (by coverage_percentage descending), then distractors (0%)
+            citations_data.sort(key=lambda x: (1 if x.get("is_cited") else 0, x.get("coverage_percentage", 0)), reverse=True)
 
         total_dur_ms = int((time.time() - start_time) * 1000)
 
@@ -308,12 +418,51 @@ Please provide a helpful, concise answer based on the retrieved scenarios above,
             "cached": cached_hit,
         }
 
-        return {
+        # Record assistant reply in SQLite (including persistent agent_trace)
+        self.state_db.add_chat_message(
+            chat_id=chat_id,
+            role="assistant",
+            content=reply_text,
+            citations=citations_data,
+            agent_trace=agent_trace,
+        )
+
+        yield {
+            "type": "done",
             "chat_id": chat_id,
             "repo_id": repo_id,
             "reply": reply_text,
             "citations": citations_data,
             "cached": cached_hit,
             "agent_trace": agent_trace,
+            "raw_evaluation": None,
+        }
+
+    def chat(
+        self,
+        user_message: str,
+        repo_id: str = "default",
+        chat_id: Optional[str] = None,
+        bypass_cache: bool = False,
+    ) -> Dict[str, Any]:
+        """Synchronous chat turn wrapper over chat_stream."""
+        final_res = None
+        for evt in self.chat_stream(
+            user_message=user_message,
+            repo_id=repo_id,
+            chat_id=chat_id,
+            bypass_cache=bypass_cache,
+        ):
+            if evt.get("type") == "done":
+                final_res = evt
+        if not final_res:
+            raise RuntimeError("Chat execution failed to produce a final response.")
+        return {
+            "chat_id": final_res["chat_id"],
+            "repo_id": final_res["repo_id"],
+            "reply": final_res["reply"],
+            "citations": final_res["citations"],
+            "cached": final_res["cached"],
+            "agent_trace": final_res["agent_trace"],
             "raw_evaluation": None,
         }

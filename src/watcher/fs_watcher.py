@@ -356,6 +356,7 @@ class InProcessWatchdogManager:
                             self.state_db.save_scenarios(scenarios, repo_id=repo_id)
                             new_ver = self.state_db.increment_corpus_version(repo_id)
                             print(f"[InProcessWatchdog] Updated SQLite metadata. Repo '{repo_id}' corpus bumped to v{new_ver}.")
+                            self.bm25_index.index_scenarios(self.state_db.get_all_scenarios())
                         except Exception as se:
                             print(f"[InProcessWatchdog] DB update error: {se}")
 

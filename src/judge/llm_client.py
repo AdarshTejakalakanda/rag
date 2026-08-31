@@ -19,17 +19,18 @@ load_dotenv()
 
 
 SUPPORTED_GEMINI_MODELS = [
+    # Gemini 3 Family (Active, Sub-Second & Reasoning)
+    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
+    "gemini-3.1-pro-preview",
+    # Gemini 2.5 Family
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3.1-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
+    "gemini-2.5-pro",
 ]
 
 INVALID_GEMINI_MODELS = set()
@@ -225,11 +226,13 @@ class LLMClient:
         if not api_key:
             return self._call_mock_text(system_prompt, user_prompt)
         primary_model = os.getenv("GEMINI_MODEL") or self.config.gemini.model
-        models_to_try = [primary_model] + [m for m in SUPPORTED_GEMINI_MODELS if m != primary_model]
+        models_to_try = [primary_model] + [m for m in SUPPORTED_GEMINI_MODELS if m != primary_model and m not in INVALID_GEMINI_MODELS]
         try:
             from google import genai
             client = genai.Client(api_key=api_key)
             for m in models_to_try:
+                if m in INVALID_GEMINI_MODELS:
+                    continue
                 try:
                     response = client.models.generate_content(
                         model=m,
@@ -239,7 +242,11 @@ class LLMClient:
                         return response.text.strip()
                 except Exception as model_err:
                     err_str = str(model_err)
-                    if "429" in err_str or "503" in err_str or "404" in err_str:
+                    if "404" in err_str:
+                        INVALID_GEMINI_MODELS.add(m)
+                        continue
+                    if "429" in err_str or "503" in err_str:
+                        time.sleep(0.5)
                         continue
                     break
         except Exception as e:
