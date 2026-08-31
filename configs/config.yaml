@@ -4,6 +4,9 @@ repositories:
   - id: repo_1
     name: Reach & QOM Automation Suite
     path: sample_data/feature_repos
+  - id: synthetic_generated_features
+    name: Synthetic Generated Features
+    path: C:\Users\Adarsh Teja Kalakand\Desktop\sysnthetic_data_generator\eval\generated_features
 
 paths:
   business_docs_dir: sample_data/business_docs

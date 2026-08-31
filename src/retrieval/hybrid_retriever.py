@@ -51,6 +51,23 @@ class HybridRetriever:
         else:
             query_text = str(query)
 
+        # Dynamic auto-sync: Ensure BM25 and Milvus memory pools are synced with SQLite
+        if self.state_db and repo_id:
+            repo_scenarios = self.state_db.get_all_scenarios(repo_id=repo_id)
+            if repo_scenarios:
+                bm25_repo_count = sum(1 for s in self.bm25.scenarios if s.repository_id == repo_id)
+                if bm25_repo_count < len(repo_scenarios):
+                    all_scenarios = self.state_db.get_all_scenarios()
+                    self.bm25.index_scenarios(all_scenarios)
+                if hasattr(self.milvus, "_local_fallback_store"):
+                    milvus_repo_count = self.milvus.count(repo_id=repo_id)
+                    if milvus_repo_count < len(repo_scenarios):
+                        self.milvus._load_cache()
+                        if self.milvus.count(repo_id=repo_id) < len(repo_scenarios):
+                            texts = [s.canonical_text for s in repo_scenarios]
+                            embeddings = self.embedder.encode(texts)
+                            self.milvus.upsert(repo_scenarios, embeddings)
+
         # 1. BM25 Lexical Retrieval (Top 50)
         bm25_hits = self.bm25.search(query_text, top_k=self.config.bm25_top_k, repo_id=repo_id)
 

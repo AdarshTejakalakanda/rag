@@ -36,6 +36,13 @@ pipeline: Optional[RAGCoveragePipeline] = None
 watchdog_mgr: Optional[InProcessWatchdogManager] = None
 
 
+@app.on_event("startup")
+async def startup_event():
+    print("[Server Startup] Pre-warming RAG Pipeline, models, and file watchdog...")
+    get_pipeline()
+    print("[Server Startup] Server ready for sub-second queries.")
+
+
 def get_pipeline() -> RAGCoveragePipeline:
     global pipeline, watchdog_mgr
     if pipeline is None:
@@ -52,21 +59,22 @@ def get_pipeline() -> RAGCoveragePipeline:
         )
         watchdog_mgr.start()
 
-        # Sync configured repos from config.yaml or sample_data
+        # Ensure configured repositories are registered in SQLite
         if cfg.repositories:
             for r_cfg in cfg.repositories:
                 r_path = Path(r_cfg.path)
                 if r_path.exists():
-                    pipeline.index_features(
-                        feature_dir=r_path.resolve(),
+                    pipeline.repo_manager.add_repository(
+                        repo_name=r_cfg.name,
+                        repo_path=r_path.resolve(),
                         repo_id=r_cfg.id,
-                        repo_name=r_cfg.name
+                        branch=r_cfg.branch,
                     )
         elif Path("sample_data/feature_repos").exists():
-            pipeline.index_features(
-                feature_dir=Path("sample_data/feature_repos").resolve(),
+            pipeline.repo_manager.add_repository(
+                repo_name="Reach & QOM Automation Suite",
+                repo_path=Path("sample_data/feature_repos").resolve(),
                 repo_id="repo_1",
-                repo_name="Reach Automation"
             )
 
         # Attach all active repo folders to Watchdog
@@ -940,6 +948,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       min-height: 0;
       overflow-y: auto;
       padding: 24px;
+      padding-bottom: 36px;
       display: flex;
       flex-direction: column;
       gap: 16px;
@@ -951,6 +960,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       font-size: 13.5px;
       line-height: 1.6;
       word-wrap: break-word;
+      flex-shrink: 0;
     }
     .chat-bubble.user {
       align-self: flex-end;
@@ -1052,31 +1062,113 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       background: var(--sidebar-bg);
       border: 1px solid var(--card-border);
       border-radius: 10px;
-      padding: 16px;
+      padding: 16px 18px;
       margin-top: 4px;
     }
     .eval-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 10px;
-      padding-bottom: 8px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
       border-bottom: 1px solid var(--card-border-subtle);
     }
     .eval-title {
       font-weight: 700;
-      font-size: 13.5px;
+      font-size: 14px;
       color: var(--text);
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
     }
     .eval-summary-text {
-      font-size: 13px;
+      font-size: 13.5px;
       line-height: 1.6;
       color: var(--text);
       margin-bottom: 12px;
     }
+
+    /* Structured Scenario Evidence List */
+    .evidence-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 10px 0 14px 0;
+    }
+    .evidence-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      gap: 12px;
+      transition: all 0.15s ease;
+    }
+    .evidence-row:hover {
+      border-color: var(--text-muted);
+      background: var(--card-hover);
+    }
+    .evidence-main {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+      cursor: pointer;
+    }
+    .evidence-icon-wrap {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    [data-theme="light"] .evidence-icon-wrap {
+      background: rgba(0, 0, 0, 0.03);
+    }
+    .evidence-text-group {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      gap: 2px;
+    }
+    .evidence-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .evidence-file-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: 'Fira Code', monospace;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .evidence-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .evidence-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 5px;
+      border: 1px solid var(--card-border);
+      white-space: nowrap;
+    }
+
     .btn-report {
       background: var(--btn-secondary-bg);
       color: var(--btn-secondary-text);
@@ -1156,7 +1248,12 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       border: 1px solid var(--card-border);
       border-radius: 10px;
       padding: 14px 16px;
-      margin-bottom: 12px;
+      margin-top: 4px;
+      margin-bottom: 20px;
+      max-width: 82%;
+      align-self: flex-start;
+      width: 100%;
+      flex-shrink: 0;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
       position: relative;
       overflow: hidden;
@@ -2619,31 +2716,40 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           summaryText = lines.slice(0, 2).join(' ') || 'Evaluation completed against test scenarios in the repository.';
         }
 
-        // Build Citation pills (only for cited scenarios with verified coverage)
+        // Build structured evidence scenario rows (only for cited scenarios with verified coverage)
         let citationPillsHtml = '';
         if (citations && citations.length > 0) {
           const citedList = citations.filter(c => c.is_cited && c.match_percentage > 0);
           if (citedList.length > 0) {
-            const pills = citedList.slice(0, 4).map(c => {
+            const rows = citedList.slice(0, 6).map(c => {
               const fileName = getFileName(c.file_path);
               const pct = c.match_percentage || 0;
               const pillColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
               const rawPath = c.file_path || '';
               return `
-                <div style="display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; margin-top: 6px;">
-                  <span class="citation-pill" title="Click to view verified Gherkin steps" onclick="openScenarioModal('${c.scenario_id}')">
-                    <i data-lucide="file-code-2" style="width: 12px; height: 12px;"></i>
-                    <strong>${escapeHtml(c.scenario_name)}</strong>
-                    <span style="opacity: 0.8">(${fileName}:${c.line_number})</span>
-                    <span class="badge" style="background: rgba(255,255,255,0.08); color: ${pillColor}; font-size: 10px; padding: 1px 5px; margin-left: 4px;">${pct}% Coverage</span>
-                  </span>
-                  <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open feature folder in Explorer" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
-                    <i data-lucide="folder" style="width: 13px; height: 13px;"></i>
-                  </button>
+                <div class="evidence-row">
+                  <div class="evidence-main" onclick="openScenarioModal('${c.scenario_id}')" title="Click to view verified Gherkin steps">
+                    <div class="evidence-icon-wrap">
+                      <i data-lucide="file-check" style="width: 14px; height: 14px; color: ${pillColor};"></i>
+                    </div>
+                    <div class="evidence-text-group">
+                      <div class="evidence-name">${escapeHtml(c.scenario_name)}</div>
+                      <div class="evidence-file-meta">
+                        <i data-lucide="file-text" style="width: 11px; height: 11px; opacity: 0.7;"></i>
+                        <span>${escapeHtml(fileName)} : Line ${c.line_number}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="evidence-actions">
+                    <span class="evidence-badge" style="color: ${pillColor}; background: rgba(255,255,255,0.06);">${pct}% Coverage</span>
+                    <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Reveal in File Explorer" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
+                      <i data-lucide="folder" style="width: 13px; height: 13px;"></i>
+                    </button>
+                  </div>
                 </div>
               `;
             }).join('');
-            citationPillsHtml = `<div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px;">${pills}</div>`;
+            citationPillsHtml = `<div class="evidence-list">${rows}</div>`;
           }
         }
 
@@ -2669,35 +2775,34 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         if (citations && citations.length > 0) {
           const citedList = citations.filter(c => c.is_cited && c.match_percentage > 0);
           if (citedList.length > 0) {
-            const p = document.createElement('div');
-            p.style.marginTop = '12px';
-            p.style.display = 'flex';
-            p.style.flexWrap = 'wrap';
-            p.style.gap = '4px';
-            citedList.slice(0, 4).forEach(c => {
+            const rows = citedList.slice(0, 4).map(c => {
               const fileName = getFileName(c.file_path);
               const pct = c.match_percentage || 0;
-              const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
+              const pillColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
               const rawPath = c.file_path || '';
-              const itemDiv = document.createElement('div');
-              itemDiv.style.display = 'inline-flex';
-              itemDiv.style.alignItems = 'center';
-              itemDiv.style.gap = '4px';
-              itemDiv.style.marginRight = '6px';
-              itemDiv.style.marginTop = '6px';
-              itemDiv.innerHTML = `
-                <span class="citation-pill" onclick="openScenarioModal('${c.scenario_id}')">
-                  <i data-lucide="file-code-2" style="width: 12px; height: 12px;"></i>
-                  <strong>${escapeHtml(c.scenario_name)}</strong>
-                  <span style="opacity: 0.8">(${fileName}:${c.line_number})</span>
-                  <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 10px; margin-left: 4px;">${pct}% Coverage</span>
-                </span>
-                <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open feature folder in Explorer" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
-                  <i data-lucide="folder" style="width: 13px; height: 13px;"></i>
-                </button>
+              return `
+                <div class="evidence-row">
+                  <div class="evidence-main" onclick="openScenarioModal('${c.scenario_id}')">
+                    <div class="evidence-icon-wrap">
+                      <i data-lucide="file-check" style="width: 14px; height: 14px; color: ${pillColor};"></i>
+                    </div>
+                    <div class="evidence-text-group">
+                      <div class="evidence-name">${escapeHtml(c.scenario_name)}</div>
+                      <div class="evidence-file-meta"><span>${escapeHtml(fileName)} : Line ${c.line_number}</span></div>
+                    </div>
+                  </div>
+                  <div class="evidence-actions">
+                    <span class="evidence-badge" style="color: ${pillColor};">${pct}% Coverage</span>
+                    <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open in Explorer" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
+                      <i data-lucide="folder" style="width: 13px; height: 13px;"></i>
+                    </button>
+                  </div>
+                </div>
               `;
-              p.appendChild(itemDiv);
-            });
+            }).join('');
+            const p = document.createElement('div');
+            p.className = 'evidence-list';
+            p.innerHTML = rows;
             div.appendChild(p);
           }
         }
@@ -2726,14 +2831,14 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         const badgeLabel = isCited ? `${pct}% Coverage` : '0% (Not Relevant)';
         const rawPath = c.file_path || '';
         card.innerHTML = `
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
-            <div class="title" style="flex: 1;"><i data-lucide="${isCited ? 'file-check-2' : 'file-minus'}" style="width: 14px; height: 14px; color: ${isCited ? 'var(--accent)' : '#64748b'}; flex-shrink: 0;"></i> <span>${escapeHtml(c.scenario_name)}</span></div>
-            <span class="badge" style="background: rgba(255,255,255,0.06); color: ${badgeColor}; font-size: 10.5px;">${badgeLabel}</span>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+            <div class="title" style="flex: 1;"><i data-lucide="${isCited ? 'file-check' : 'file-minus'}" style="width: 14px; height: 14px; color: ${isCited ? 'var(--green)' : '#64748b'}; flex-shrink: 0; margin-top: 1px;"></i> <span>${escapeHtml(c.scenario_name)}</span></div>
+            <span class="badge" style="background: rgba(255,255,255,0.06); color: ${badgeColor}; font-size: 10.5px; flex-shrink: 0;">${badgeLabel}</span>
           </div>
           <div class="meta" style="margin-top: 6px;">Feature: ${escapeHtml(c.feature_title || '')}</div>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
-            <div class="meta" style="color: var(--accent); margin-top: 0;">${escapeHtml(fileName)} : Line ${c.line_number}</div>
-            <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open feature folder in Explorer" style="padding: 2px 7px; font-size: 10.5px;" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+            <div class="meta" style="color: var(--accent); margin-top: 0; font-size: 11px;">${escapeHtml(fileName)} : Line ${c.line_number}</div>
+            <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open feature folder in Explorer" style="padding: 3px 8px; font-size: 11px;" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
               <i data-lucide="folder" style="width: 12px; height: 12px;"></i> Open
             </button>
           </div>
@@ -2920,3 +3025,5 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
     return HTML_DASHBOARD_TEMPLATE
+# Live sync ready
+
