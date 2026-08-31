@@ -114,6 +114,11 @@ class NewChatSessionRequest(BaseModel):
     title: Optional[str] = None
 
 
+class OpenFileLocationRequest(BaseModel):
+    file_path: str
+    line_number: Optional[int] = 1
+
+
 # ==================== REST API Endpoints ====================
 
 # 1. Repositories
@@ -312,22 +317,62 @@ async def create_new_chat_session(req: NewChatSessionRequest):
     return {"status": "success", "chat_id": chat_id, "repo_id": req.repo_id}
 
 
-@app.delete("/api/chat-sessions/{chat_id}")
-async def delete_chat_session(chat_id: str):
-    p = get_pipeline()
+@app.post("/api/open-file-location")
+async def open_file_location(req: OpenFileLocationRequest):
+    raw_path = (req.file_path or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail="file_path is required")
+
+    p = Path(raw_path).resolve()
+    if not p.exists():
+        p_alt = Path(os.getcwd()) / raw_path
+        if p_alt.exists():
+            p = p_alt.resolve()
+
+    import platform
+    import subprocess
+    sys_name = platform.system()
     try:
-        p.state_db.delete_chat_session(chat_id)
-        return {"status": "success", "deleted_chat_id": chat_id}
+        if sys_name == "Windows":
+            if p.exists():
+                subprocess.Popen(["explorer.exe", f"/select,{str(p)}"])
+            elif p.parent.exists():
+                subprocess.Popen(["explorer.exe", str(p.parent)])
+            else:
+                raise HTTPException(status_code=404, detail=f"File path not found: {raw_path}")
+        elif sys_name == "Darwin":
+            if p.exists():
+                subprocess.Popen(["open", "-R", str(p)])
+            else:
+                subprocess.Popen(["open", str(p.parent)])
+        else:
+            folder_to_open = p.parent if p.exists() or p.parent.exists() else Path(os.getcwd())
+            subprocess.Popen(["xdg-open", str(folder_to_open)])
+        return {"status": "success", "file_path": str(p)}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/chat-sessions-clear")
+@app.delete("/api/chat-sessions-clear")
 @app.delete("/api/chat-sessions/clear")
 async def clear_all_chat_sessions(repo_id: Optional[str] = None):
     p = get_pipeline()
     try:
         p.state_db.clear_chat_sessions(repo_id=repo_id)
         return {"status": "success", "cleared_repo": repo_id or "all"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/chat-sessions/{chat_id}")
+async def delete_chat_session(chat_id: str):
+    p = get_pipeline()
+    try:
+        p.state_db.delete_chat_session(chat_id)
+        return {"status": "success", "deleted_chat_id": chat_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -439,20 +484,94 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js" crossorigin="anonymous"></script>
   <style>
-    :root {
-      --bg: #0b1120;
-      --card-bg: #131d31;
-      --card-border: #1e293b;
-      --accent: #38bdf8;
-      --accent-glow: rgba(56, 189, 248, 0.18);
-      --purple: #a855f7;
-      --purple-glow: rgba(168, 85, 247, 0.15);
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --green: #22c55e;
-      --yellow: #eab308;
+    :root, [data-theme="dark"] {
+      --bg: #121212;
+      --sidebar-bg: #181818;
+      --card-bg: #1e1e1e;
+      --card-hover: #262626;
+      --card-border: #2e2e2e;
+      --card-border-subtle: #242424;
+      --feed-bg: #141414;
+      --feed-entry-bg: #1c1c1c;
+      --accent: #ffffff;
+      --accent-glow: rgba(255, 255, 255, 0.08);
+      --purple: #d4d4d8;
+      --purple-glow: rgba(255, 255, 255, 0.06);
+      --text: #ececec;
+      --text-muted: #8e8e8e;
+      --text-subtle: #5e5e5e;
+      --input-bg: #1e1e1e;
+      --input-border: #333333;
+      --btn-primary-bg: #ececec;
+      --btn-primary-text: #121212;
+      --btn-primary-hover: #ffffff;
+      --btn-secondary-bg: #262626;
+      --btn-secondary-text: #e2e8f0;
+      --btn-secondary-border: #383838;
+      --btn-secondary-hover: #333333;
+      --user-bubble-bg: #2b2b2b;
+      --user-bubble-border: #383838;
+      --user-bubble-text: #ffffff;
+      --assistant-bubble-bg: #1e1e1e;
+      --assistant-bubble-border: #2e2e2e;
+      --code-bg: #141414;
+      --code-border: #282828;
+      --code-text: #e4e4e7;
+      --modal-bg: #1e1e1e;
+      --modal-border: #333333;
+      --toast-bg: #212121;
+      --toast-border: #383838;
+      --scrollbar-thumb: #2e2e2e;
+      --scrollbar-track: #121212;
+      --green: #10b981;
+      --yellow: #f59e0b;
       --red: #ef4444;
     }
+
+    [data-theme="light"] {
+      --bg: #f9f9fb;
+      --sidebar-bg: #f3f3f6;
+      --card-bg: #ffffff;
+      --card-hover: #f7f7fa;
+      --card-border: #e2e2e8;
+      --card-border-subtle: #eaeaea;
+      --feed-bg: #f4f4f7;
+      --feed-entry-bg: #ffffff;
+      --accent: #111111;
+      --accent-glow: rgba(0, 0, 0, 0.06);
+      --purple: #4b5563;
+      --purple-glow: rgba(0, 0, 0, 0.04);
+      --text: #18181b;
+      --text-muted: #71717a;
+      --text-subtle: #a1a1aa;
+      --input-bg: #ffffff;
+      --input-border: #d4d4d8;
+      --btn-primary-bg: #18181b;
+      --btn-primary-text: #ffffff;
+      --btn-primary-hover: #000000;
+      --btn-secondary-bg: #f4f4f5;
+      --btn-secondary-text: #18181b;
+      --btn-secondary-border: #d4d4d8;
+      --btn-secondary-hover: #e4e4e7;
+      --user-bubble-bg: #f4f4f5;
+      --user-bubble-border: #e4e4e7;
+      --user-bubble-text: #18181b;
+      --assistant-bubble-bg: #ffffff;
+      --assistant-bubble-border: #e2e2e8;
+      --code-bg: #f4f4f5;
+      --code-border: #e4e4e7;
+      --code-text: #18181b;
+      --modal-bg: #ffffff;
+      --modal-border: #d4d4d8;
+      --toast-bg: #ffffff;
+      --toast-border: #e2e2e8;
+      --scrollbar-thumb: #d4d4d8;
+      --scrollbar-track: #f9f9fb;
+      --green: #059669;
+      --yellow: #d97706;
+      --red: #dc2626;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
     
     /* Lucide Icon Base Styling */
@@ -469,24 +588,24 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       100% { transform: rotate(360deg); }
     }
     
-    /* Modern Visible Custom Scrollbars */
+    /* Modern Minimalist Monochrome Custom Scrollbars */
     * {
       scrollbar-width: thin;
-      scrollbar-color: #334155 rgba(15, 23, 42, 0.6);
+      scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
     }
     ::-webkit-scrollbar {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
     }
     ::-webkit-scrollbar-track {
-      background: rgba(15, 23, 42, 0.6);
+      background: var(--scrollbar-track);
     }
     ::-webkit-scrollbar-thumb {
-      background: #334155;
+      background: var(--scrollbar-thumb);
       border-radius: 4px;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: var(--accent);
+      background: var(--text-muted);
     }
 
     html, body {
@@ -495,16 +614,17 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       overflow: hidden;
     }
     body {
-      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       background-color: var(--bg);
       color: var(--text);
       display: flex;
       flex-direction: column;
+      transition: background-color 0.2s ease, color 0.2s ease;
     }
     
     /* Top Header */
     header {
-      background: #0f172a;
+      background: var(--sidebar-bg);
       border-bottom: 1px solid var(--card-border);
       padding: 12px 24px;
       display: flex;
@@ -517,39 +637,42 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       width: 32px;
       height: 32px;
       border-radius: 8px;
-      background: rgba(56, 189, 248, 0.12);
-      border: 1px solid rgba(56, 189, 248, 0.3);
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--accent);
     }
-    .brand-title { font-weight: 800; font-size: 17px; letter-spacing: -0.3px; color: #fff; }
-    .header-actions { display: flex; align-items: center; gap: 14px; }
+    .brand-title { font-weight: 700; font-size: 16px; letter-spacing: -0.2px; color: var(--text); }
+    .header-actions { display: flex; align-items: center; gap: 10px; }
     .watchdog-pill {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       padding: 4px 10px;
       border-radius: 9999px;
-      background: rgba(34, 197, 94, 0.12);
-      border: 1px solid rgba(34, 197, 94, 0.3);
-      color: var(--green);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
       font-size: 11.5px;
-      font-weight: 600;
+      font-weight: 500;
+    }
+    [data-theme="light"] .watchdog-pill {
+      background: rgba(0, 0, 0, 0.03);
     }
     .watchdog-pulse {
       width: 7px; height: 7px; border-radius: 50%; background: var(--green);
-      box-shadow: 0 0 8px var(--green);
+      box-shadow: 0 0 6px var(--green);
       animation: pulseAnim 2s infinite;
     }
     @keyframes pulseAnim { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
     .repo-select-box { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted); }
     select, input, textarea {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #fff;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      color: var(--text);
       padding: 7px 12px;
       border-radius: 7px;
       font-family: inherit;
@@ -559,30 +682,50 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     }
     select:focus, input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
 
+    .theme-toggle-btn {
+      background: var(--btn-secondary-bg);
+      border: 1px solid var(--btn-secondary-border);
+      color: var(--text);
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .theme-toggle-btn:hover {
+      background: var(--btn-secondary-hover);
+      border-color: var(--card-border);
+      transform: translateY(-1px);
+    }
+
     .btn {
-      background: var(--accent);
-      color: #0f172a;
+      background: var(--btn-primary-bg);
+      color: var(--btn-primary-text);
       border: none;
       padding: 7px 14px;
       border-radius: 7px;
-      font-weight: 700;
+      font-weight: 600;
       font-size: 12.5px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      transition: all 0.2s;
+      transition: all 0.15s ease;
     }
-    .btn:hover { background: #7dd3fc; transform: translateY(-1px); }
-    .btn-secondary { background: #1e293b; color: #fff; border: 1px solid #334155; }
-    .btn-secondary:hover { background: #334155; }
-    .btn-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
-    .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+    .btn:hover { background: var(--btn-primary-hover); transform: translateY(-1px); }
+    .btn-secondary { background: var(--btn-secondary-bg); color: var(--btn-secondary-text); border: 1px solid var(--btn-secondary-border); }
+    .btn-secondary:hover { background: var(--btn-secondary-hover); border-color: var(--card-border); }
+    .btn-danger { background: rgba(239, 68, 68, 0.08); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); }
+    .btn-danger:hover { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.35); }
 
     /* Navigation Tabs */
     .nav-tabs {
       display: flex;
-      background: #0f172a;
+      background: var(--sidebar-bg);
       border-bottom: 1px solid var(--card-border);
       padding: 0 24px;
       flex-shrink: 0;
@@ -592,9 +735,9 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       border: none;
       border-bottom: 2px solid transparent;
       color: var(--text-muted);
-      padding: 13px 20px;
-      font-size: 14px;
-      font-weight: 700;
+      padding: 12px 18px;
+      font-size: 13.5px;
+      font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -602,7 +745,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       transition: all 0.2s;
     }
     .tab-btn:hover { color: #fff; }
-    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn.active { color: #fff; border-bottom-color: #fff; }
 
     /* Main Area */
     main {
@@ -641,7 +784,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     .panel-card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
-      border-radius: 12px;
+      border-radius: 10px;
       padding: 20px;
       display: flex;
       flex-direction: column;
@@ -654,12 +797,12 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       border-bottom: 1px solid var(--card-border);
       padding-bottom: 12px;
     }
-    .panel-header h3 { font-size: 15px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
+    .panel-header h3 { font-size: 14.5px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
     
     .repo-card {
-      background: #0f172a;
-      border: 1px solid #1e293b;
-      border-radius: 9px;
+      background: var(--sidebar-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
       padding: 14px;
       margin-bottom: 10px;
       display: flex;
@@ -667,14 +810,14 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       align-items: center;
       transition: all 0.2s;
     }
-    .repo-card:hover { border-color: #334155; }
-    .repo-card.selected { border-color: var(--accent); background: #14213d; }
-    .repo-info h4 { font-size: 14px; font-weight: 700; color: #fff; }
-    .repo-info .meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; font-family: 'Fira Code', monospace; }
+    .repo-card:hover { border-color: var(--card-border); background: var(--card-hover); }
+    .repo-card.selected { border-color: var(--accent); background: var(--card-hover); }
+    .repo-info h4 { font-size: 13.5px; font-weight: 600; color: var(--text); }
+    .repo-info .meta { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; font-family: 'Fira Code', monospace; }
 
     .folder-item {
-      background: #0f172a;
-      border: 1px solid #1e293b;
+      background: var(--sidebar-bg);
+      border: 1px solid var(--card-border);
       border-radius: 8px;
       padding: 12px;
       margin-bottom: 8px;
@@ -682,7 +825,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       justify-content: space-between;
       align-items: center;
     }
-    .folder-path { font-family: 'Fira Code', monospace; font-size: 12px; color: var(--accent); word-break: break-all; }
+    .folder-path { font-family: 'Fira Code', monospace; font-size: 12px; color: var(--text); word-break: break-all; }
     .badge {
       display: inline-flex;
       align-items: center;
@@ -690,14 +833,14 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       padding: 3px 8px;
       border-radius: 5px;
       font-size: 11px;
-      font-weight: 700;
+      font-weight: 600;
     }
-    .badge-live { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+    .badge-live { background: rgba(16, 185, 129, 0.1); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.25); }
 
     /* Live Watchdog Activity Feed */
     .activity-feed {
-      background: #070d19;
-      border: 1px solid #1e293b;
+      background: var(--feed-bg);
+      border: 1px solid var(--card-border);
       border-radius: 8px;
       padding: 14px;
       flex: 1;
@@ -713,9 +856,10 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     .event-entry {
       padding: 6px 10px;
       border-radius: 6px;
-      background: #0f172a;
-      border-left: 3px solid var(--accent);
-      color: #cbd5e1;
+      background: var(--feed-entry-bg);
+      border: 1px solid var(--card-border-subtle);
+      border-left: 3px solid var(--text-muted);
+      color: var(--text);
       line-height: 1.5;
     }
     .event-entry.modified { border-left-color: var(--yellow); }
@@ -732,7 +876,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       overflow: hidden;
     }
     .sessions-col {
-      background: #0f172a;
+      background: var(--sidebar-bg);
       border-right: 1px solid var(--card-border);
       display: flex;
       flex-direction: column;
@@ -741,7 +885,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       overflow: hidden;
     }
     .sessions-header {
-      padding: 16px;
+      padding: 14px 16px;
       border-bottom: 1px solid var(--card-border);
       display: flex;
       justify-content: space-between;
@@ -758,17 +902,17 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       padding: 10px 12px;
       border-radius: 7px;
       cursor: pointer;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
       background: transparent;
       border: 1px solid transparent;
-      transition: all 0.2s;
+      transition: all 0.15s ease;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    .session-item:hover { background: #1e293b; }
-    .session-item.active { background: #1e293b; border-color: var(--accent); }
-    .session-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .session-item:hover { background: var(--card-hover); }
+    .session-item.active { background: var(--card-hover); border-color: var(--card-border); }
+    .session-title { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .session-time { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
     .chat-window {
@@ -787,51 +931,53 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       padding: 24px;
       display: flex;
       flex-direction: column;
-      gap: 18px;
+      gap: 16px;
     }
     .chat-bubble {
       max-width: 82%;
-      padding: 16px 20px;
+      padding: 14px 18px;
       border-radius: 12px;
-      font-size: 14px;
-      line-height: 1.65;
+      font-size: 13.5px;
+      line-height: 1.6;
       word-wrap: break-word;
     }
     .chat-bubble.user {
       align-self: flex-end;
-      background: #0284c7;
-      color: #fff;
+      background: var(--user-bubble-bg);
+      color: var(--user-bubble-text);
+      border: 1px solid var(--user-bubble-border);
       border-bottom-right-radius: 2px;
     }
     .chat-bubble.assistant {
       align-self: flex-start;
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
+      background: var(--assistant-bubble-bg);
+      border: 1px solid var(--assistant-bubble-border);
       color: var(--text);
       border-bottom-left-radius: 2px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
     .chat-bubble code {
-      background: #0b1120;
+      background: var(--code-bg);
       padding: 2px 6px;
       border-radius: 4px;
       font-family: 'Fira Code', monospace;
-      font-size: 12.5px;
-      color: #38bdf8;
+      font-size: 12px;
+      color: var(--code-text);
+      border: 1px solid var(--code-border);
     }
 
     .chat-input-container {
       padding: 16px 24px;
-      background: #0f172a;
+      background: var(--sidebar-bg);
       border-top: 1px solid var(--card-border);
       display: flex;
       gap: 10px;
       flex-shrink: 0;
     }
-    .chat-input-container input { flex: 1; padding: 12px 16px; font-size: 14px; border-radius: 9px; }
+    .chat-input-container input { flex: 1; padding: 11px 16px; font-size: 13.5px; border-radius: 8px; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text); }
 
     .citations-col {
-      background: #0f172a;
+      background: var(--sidebar-bg);
       border-left: 1px solid var(--card-border);
       padding: 16px;
       display: flex;
@@ -843,15 +989,15 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     .citation-card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
-      border-radius: 9px;
+      border-radius: 8px;
       padding: 12px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s ease;
     }
-    .citation-card:hover { border-color: var(--accent); transform: translateY(-2px); }
-    .citation-card .title { font-weight: 700; font-size: 13px; color: #fff; }
-    .citation-card .meta { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; font-family: 'Fira Code', monospace; }
+    .citation-card:hover { border-color: var(--accent); background: var(--card-hover); }
+    .citation-card .title { font-weight: 600; font-size: 12.5px; color: var(--text); }
+    .citation-card .meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; font-family: 'Fira Code', monospace; }
 
     .citation-pill {
       display: inline-flex;
@@ -860,20 +1006,40 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       padding: 4px 9px;
       border-radius: 6px;
       font-size: 12px;
-      background: rgba(56, 189, 248, 0.12);
-      color: var(--accent);
-      margin-right: 6px;
-      margin-top: 8px;
+      background: var(--card-hover);
+      color: var(--text);
       cursor: pointer;
-      border: 1px solid rgba(56, 189, 248, 0.3);
-      transition: all 0.2s;
+      border: 1px solid var(--card-border);
+      transition: all 0.15s ease;
     }
-    .citation-pill:hover { background: rgba(56, 189, 248, 0.25); }
+    .citation-pill:hover { background: var(--btn-secondary-hover); border-color: var(--accent); }
+
+    .btn-icon-folder {
+      background: var(--card-hover);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .btn-icon-folder:hover {
+      background: var(--btn-secondary-hover);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
 
     /* Evaluation Summary Card in Chat */
     .eval-summary-card {
-      background: #0f172a;
-      border: 1px solid #1e293b;
+      background: var(--sidebar-bg);
+      border: 1px solid var(--card-border);
       border-radius: 10px;
       padding: 16px;
       margin-top: 4px;
@@ -884,41 +1050,40 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       align-items: center;
       margin-bottom: 10px;
       padding-bottom: 8px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      border-bottom: 1px solid var(--card-border-subtle);
     }
     .eval-title {
-      font-weight: 800;
-      font-size: 14px;
-      color: #fff;
+      font-weight: 700;
+      font-size: 13.5px;
+      color: var(--text);
       display: flex;
       align-items: center;
       gap: 6px;
     }
     .eval-summary-text {
-      font-size: 13.5px;
-      line-height: 1.65;
-      color: #cbd5e1;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text);
       margin-bottom: 12px;
     }
     .btn-report {
-      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-      color: #fff;
-      border: 1px solid rgba(56, 189, 248, 0.4);
-      padding: 8px 15px;
+      background: var(--btn-secondary-bg);
+      color: var(--btn-secondary-text);
+      border: 1px solid var(--btn-secondary-border);
+      padding: 7px 14px;
       border-radius: 7px;
-      font-size: 12px;
-      font-weight: 700;
+      font-size: 11.5px;
+      font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      transition: all 0.2s;
-      box-shadow: 0 2px 8px rgba(2, 132, 199, 0.25);
+      transition: all 0.15s ease;
     }
     .btn-report:hover {
-      background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%);
+      background: var(--btn-secondary-hover);
+      border-color: var(--card-border);
       transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(56, 189, 248, 0.35);
     }
     
     /* Code Block with Copy Button */
@@ -930,21 +1095,21 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       position: absolute;
       top: 8px;
       right: 8px;
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #94a3b8;
+      background: var(--btn-secondary-bg);
+      border: 1px solid var(--btn-secondary-border);
+      color: var(--text-muted);
       border-radius: 5px;
       padding: 3px 8px;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s ease;
       z-index: 2;
     }
     .code-copy-btn:hover {
-      color: #fff;
-      background: #334155;
-      border-color: var(--accent);
+      color: var(--text);
+      background: var(--btn-secondary-hover);
+      border-color: var(--card-border);
     }
 
     /* ================= ANTHROPIC-STYLE AGENT THOUGHT & RETRY LOOP ================= */
@@ -955,7 +1120,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     }
     @keyframes anthropicPulse {
       0%, 100% { transform: scale(0.85); opacity: 0.7; }
-      50% { transform: scale(1.2); opacity: 1; filter: drop-shadow(0 0 6px #a855f7); }
+      50% { transform: scale(1.2); opacity: 1; filter: drop-shadow(0 0 4px var(--accent)); }
     }
     @keyframes anthropicShimmer {
       0% { background-position: -200% 0; }
@@ -967,7 +1132,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     .shimmer-text {
-      background: linear-gradient(90deg, #94a3b8 0%, #ffffff 50%, #94a3b8 100%);
+      background: linear-gradient(90deg, var(--text-muted) 0%, var(--accent) 50%, var(--text-muted) 100%);
       background-size: 200% 100%;
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -976,12 +1141,12 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
     /* Live Thinking Container (In-Flight) */
     .live-thought-container {
-      background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(19, 29, 49, 0.85) 100%);
-      border: 1px solid rgba(56, 189, 248, 0.3);
-      border-radius: 12px;
-      padding: 16px 18px;
+      background: var(--sidebar-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 14px 16px;
       margin-bottom: 12px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
       position: relative;
       overflow: hidden;
     }
@@ -989,7 +1154,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       content: '';
       position: absolute;
       top: 0; left: 0; right: 0; height: 2px;
-      background: linear-gradient(90deg, transparent, var(--accent), var(--purple), transparent);
+      background: linear-gradient(90deg, transparent, var(--accent), var(--text-muted), transparent);
       animation: anthropicShimmer 2s infinite linear;
       background-size: 200% 100%;
     }
@@ -997,7 +1162,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
     .live-thought-title-group {
       display: flex;
@@ -1006,8 +1171,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     }
     .anthropic-spinner-ring {
       position: relative;
-      width: 24px;
-      height: 24px;
+      width: 20px;
+      height: 20px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -1017,172 +1182,170 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       position: absolute;
       inset: 0;
       border-radius: 50%;
-      border: 2px solid rgba(56, 189, 248, 0.15);
+      border: 2px solid var(--card-border);
       border-top-color: var(--accent);
-      border-right-color: var(--purple);
+      border-right-color: var(--text-muted);
       animation: anthropicRotate 0.9s linear infinite;
     }
     .anthropic-spinner-center {
-      width: 6px;
-      height: 6px;
+      width: 5px;
+      height: 5px;
       border-radius: 50%;
       background: var(--accent);
-      box-shadow: 0 0 8px var(--accent);
+      box-shadow: 0 0 6px var(--accent);
       animation: anthropicPulse 1.4s ease-in-out infinite;
     }
     .live-agent-badge {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 3px 9px;
+      gap: 5px;
+      padding: 3px 8px;
       border-radius: 9999px;
-      background: rgba(56, 189, 248, 0.12);
-      border: 1px solid rgba(56, 189, 248, 0.35);
-      color: var(--accent);
-      font-size: 11.5px;
-      font-weight: 700;
+      background: var(--card-hover);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 600;
     }
     .live-step-list {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 5px;
     }
     .live-step-item {
       display: flex;
       flex-direction: column;
-      gap: 3px;
-      padding: 7px 10px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      gap: 2px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border-subtle);
       animation: stepFadeIn 0.3s ease-out;
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
     }
     .live-step-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      font-size: 12.5px;
-      color: #94a3b8;
+      font-size: 12px;
+      color: var(--text-muted);
     }
     .live-step-left {
       display: flex;
       align-items: center;
-      gap: 9px;
+      gap: 8px;
     }
     .live-step-item.active {
-      background: rgba(56, 189, 248, 0.07);
-      border-color: rgba(56, 189, 248, 0.3);
-      box-shadow: 0 0 12px rgba(56, 189, 248, 0.1);
+      background: var(--card-hover);
+      border-color: var(--accent);
     }
     .live-step-item.active .live-step-header {
-      color: #f8fafc;
+      color: var(--text);
       font-weight: 600;
     }
     .live-step-item.completed {
-      background: rgba(34, 197, 94, 0.03);
-      border-color: rgba(34, 197, 94, 0.18);
+      background: var(--card-bg);
+      border-color: var(--card-border);
     }
     .live-step-item.completed .live-step-header {
-      color: #e2e8f0;
+      color: var(--text);
     }
     .live-step-detail {
       font-size: 11px;
-      color: #64748b;
-      padding-left: 27px;
+      color: var(--text-muted);
+      padding-left: 24px;
       font-family: 'Fira Code', monospace;
     }
     .live-step-item.active .live-step-detail {
-      color: #38bdf8;
+      color: var(--text);
     }
     .live-step-dur {
-      font-size: 11px;
+      font-size: 10.5px;
       font-family: 'Fira Code', monospace;
-      color: #64748b;
+      color: var(--text-muted);
     }
     .live-step-item.completed .live-step-dur {
-      color: #4ade80;
+      color: var(--green);
     }
     .step-indicator-icon {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 10px;
+      font-size: 9px;
       flex-shrink: 0;
-      background: rgba(255, 255, 255, 0.06);
-      color: #64748b;
+      background: var(--card-hover);
+      color: var(--text-muted);
     }
     .live-step-item.active .step-indicator-icon {
-      background: rgba(56, 189, 248, 0.2);
-      color: var(--accent);
-      box-shadow: 0 0 8px var(--accent-glow);
+      background: var(--btn-primary-bg);
+      color: var(--btn-primary-text);
     }
     .live-step-item.completed .step-indicator-icon {
-      background: rgba(34, 197, 94, 0.2);
+      background: rgba(16, 185, 129, 0.18);
       color: var(--green);
     }
 
     /* Finished Thought Accordion (Anthropic Style) */
     .anthropic-thought-card {
       margin-bottom: 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      background: rgba(15, 23, 42, 0.65);
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+      background: var(--sidebar-bg);
       overflow: hidden;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: all 0.15s ease;
     }
     .anthropic-thought-card:hover {
-      border-color: rgba(56, 189, 248, 0.3);
+      border-color: var(--accent);
     }
     .thought-toggle-btn {
       width: 100%;
       background: none;
       border: none;
-      padding: 9px 14px;
+      padding: 8px 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      color: #cbd5e1;
+      color: var(--text-muted);
       font-family: inherit;
-      font-size: 12.5px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
       text-align: left;
       user-select: none;
       transition: background 0.15s;
     }
     .thought-toggle-btn:hover {
-      background: rgba(255, 255, 255, 0.03);
-      color: #fff;
+      background: var(--card-hover);
+      color: var(--text);
     }
     .thought-header-left {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
     }
     .thought-sparkle {
-      color: var(--purple);
-      font-size: 14px;
+      color: var(--text-muted);
+      font-size: 13px;
     }
     .thought-chevron {
       font-size: 11px;
-      color: #64748b;
-      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      color: var(--text-muted);
+      transition: transform 0.2s ease;
     }
     .anthropic-thought-card.expanded .thought-chevron {
       transform: rotate(180deg);
-      color: var(--accent);
+      color: var(--text);
     }
     .thought-drawer {
       display: none;
-      padding: 12px 16px 14px 16px;
-      border-top: 1px solid rgba(255, 255, 255, 0.06);
-      background: rgba(11, 17, 32, 0.85);
-      animation: stepFadeIn 0.2s ease-out;
+      padding: 12px 14px 14px 14px;
+      border-top: 1px solid var(--card-border-subtle);
+      background: var(--feed-bg);
+      animation: stepFadeIn 0.15s ease-out;
     }
     .anthropic-thought-card.expanded .thought-drawer {
       display: block;
@@ -1191,20 +1354,20 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     /* Vertical Timeline inside Thought Drawer */
     .thought-timeline {
       position: relative;
-      padding-left: 20px;
+      padding-left: 18px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      margin-top: 6px;
+      gap: 10px;
+      margin-top: 4px;
     }
     .thought-timeline::before {
       content: '';
       position: absolute;
-      left: 7px;
-      top: 6px;
-      bottom: 6px;
+      left: 6px;
+      top: 5px;
+      bottom: 5px;
       width: 2px;
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--card-border);
     }
     .timeline-node {
       position: relative;
@@ -1212,39 +1375,37 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     .timeline-node::before {
       content: '';
       position: absolute;
-      left: -17px;
+      left: -15px;
       top: 5px;
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      background: #334155;
-      border: 2px solid #0f172a;
+      background: var(--card-border);
+      border: 2px solid var(--feed-bg);
     }
     .timeline-node.completed::before {
       background: var(--green);
-      box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
     }
     .timeline-node.retried::before {
       background: var(--yellow);
-      box-shadow: 0 0 6px rgba(234, 179, 8, 0.6);
     }
     .timeline-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-size: 12px;
-      font-weight: 700;
-      color: #e2e8f0;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text);
     }
     .timeline-detail {
-      font-size: 11.5px;
-      color: #94a3b8;
+      font-size: 11px;
+      color: var(--text-muted);
       margin-top: 2px;
-      line-height: 1.45;
+      line-height: 1.4;
     }
     .timeline-dur {
-      font-size: 10.5px;
-      color: #64748b;
+      font-size: 10px;
+      color: var(--text-muted);
       font-family: 'Fira Code', monospace;
     }
 
@@ -1254,45 +1415,109 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       position: fixed;
       z-index: 9999;
       left: 0; top: 0; width: 100%; height: 100%;
-      background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(5px);
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(6px);
       align-items: center; justify-content: center;
     }
     .modal.show { display: flex; }
     .modal-content {
-      background: #1e293b;
-      border: 1px solid var(--card-border);
+      background: var(--modal-bg);
+      border: 1px solid var(--modal-border);
       border-radius: 12px;
       width: 90%; max-width: 800px;
       max-height: 85vh;
       overflow-y: auto;
-      padding: 24px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      padding: 22px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
     }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 14px; }
-    .modal-close { background: none; border: none; font-size: 26px; color: var(--text-muted); cursor: pointer; }
-    .modal-close:hover { color: #fff; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 12px; }
+    .modal-close { background: none; border: none; font-size: 22px; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; }
+    .modal-close:hover { color: var(--text); }
     .gherkin-viewer {
-      margin-top: 16px;
-      background: #0b1120;
-      border: 1px solid #334155;
+      margin-top: 14px;
+      background: var(--code-bg);
+      border: 1px solid var(--code-border);
       border-radius: 8px;
-      padding: 16px;
+      padding: 14px;
       font-family: 'Fira Code', monospace;
-      font-size: 13px;
-      color: #38bdf8;
+      font-size: 12.5px;
+      color: var(--code-text);
       white-space: pre-wrap;
-      line-height: 1.65;
+      line-height: 1.6;
+    }
+
+    /* Custom Toast Notifications */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 99999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--toast-bg);
+      border: 1px solid var(--toast-border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+      min-width: 250px;
+      max-width: 380px;
+      animation: toastSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: all 0.2s ease;
+    }
+    .toast.toast-success { border-left: 3px solid var(--green); }
+    .toast.toast-error { border-left: 3px solid var(--red); }
+    .toast.toast-warning { border-left: 3px solid var(--yellow); }
+    .toast.toast-info { border-left: 3px solid var(--text-muted); }
+    @keyframes toastSlideIn {
+      from { opacity: 0; transform: translateY(12px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes toastFadeOut {
+      from { opacity: 1; transform: translateY(0); }
+      to { opacity: 0; transform: translateY(8px); }
     }
   </style>
 </head>
 <body>
 
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Custom Confirmation Dialog Modal -->
+  <div id="customConfirmModal" class="modal" onclick="if(event.target===this) closeConfirmDialog(false)">
+    <div class="modal-content" style="max-width: 420px; padding: 20px; border-radius: 12px; background: #1e1e1e; border: 1px solid #333;">
+      <div style="display: flex; align-items: flex-start; gap: 12px;">
+        <div id="confirmIconBox" style="width: 36px; height: 36px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); color: #f87171; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <i id="confirmIcon" data-lucide="alert-triangle" style="width: 18px; height: 18px;"></i>
+        </div>
+        <div style="flex: 1;">
+          <h3 id="confirmTitle" style="font-size: 14.5px; font-weight: 600; color: #fff; margin-bottom: 5px;">Confirm Action</h3>
+          <p id="confirmMessage" style="font-size: 12.5px; color: #a1a1aa; line-height: 1.5;">Are you sure you want to proceed?</p>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px;">
+        <button id="confirmCancelBtn" class="btn btn-secondary" style="padding: 6px 13px; font-size: 12px;" onclick="closeConfirmDialog(false)">Cancel</button>
+        <button id="confirmActionBtn" class="btn" style="padding: 6px 15px; font-size: 12px;" onclick="executeConfirmDialog()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Top Header -->
   <header>
     <div class="brand">
       <div class="brand-icon">
-        <i data-lucide="shield-check" style="width: 20px; height: 20px;"></i>
+        <i data-lucide="shield-check" style="width: 18px; height: 18px;"></i>
       </div>
       <span class="brand-title">Local RAG BDD Automation Agent</span>
     </div>
@@ -1309,16 +1534,19 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <label style="display: flex; align-items: center; gap: 4px;"><i data-lucide="database" style="width: 14px; height: 14px;"></i> Active Repo:</label>
         <select id="globalRepoSelector" onchange="onGlobalRepoChange()"></select>
       </div>
+      <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Light / Dark Theme" onclick="toggleTheme()">
+        <i id="themeToggleIcon" data-lucide="sun" style="width: 15px; height: 15px;"></i>
+      </button>
     </div>
   </header>
 
   <!-- 2 Main Navigation Tabs -->
   <nav class="nav-tabs">
     <button class="tab-btn active" onclick="switchMainTab('indexerTab', this)">
-      <i data-lucide="folder-tree" style="width: 16px; height: 16px;"></i> Indexer
+      <i data-lucide="folder-tree" style="width: 15px; height: 15px;"></i> Indexer
     </button>
     <button class="tab-btn" onclick="switchMainTab('ragBotTab', this)">
-      <i data-lucide="bot" style="width: 16px; height: 16px;"></i> RAG Bot
+      <i data-lucide="bot" style="width: 15px; height: 15px;"></i> RAG Bot
     </button>
   </nav>
 
@@ -1340,8 +1568,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             </div>
 
             <!-- Add Repo Form -->
-            <div id="addRepoForm" style="display: none; background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #1e293b;">
-              <h4 style="font-size: 13px; margin-bottom: 10px; color: #fff; display: flex; align-items: center; gap: 6px;">
+            <div id="addRepoForm" style="display: none; background: var(--sidebar-bg); padding: 14px; border-radius: 8px; border: 1px solid var(--card-border);">
+              <h4 style="font-size: 13px; margin-bottom: 10px; color: var(--text); display: flex; align-items: center; gap: 6px;">
                 <i data-lucide="plus-circle" style="width: 14px; height: 14px; color: var(--accent);"></i> Register New Automation Repository
               </h4>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
@@ -1554,16 +1782,16 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       });
 
       // Headers
-      out = out.replace(/^### (.*?)$/gm, '<h3 style="font-size: 15px; font-weight: 700; color: #38bdf8; margin: 14px 0 8px 0;">$1</h3>');
-      out = out.replace(/^## (.*?)$/gm, '<h2 style="font-size: 16px; font-weight: 800; color: #fff; margin: 16px 0 10px 0;">$1</h2>');
-      out = out.replace(/^# (.*?)$/gm, '<h1 style="font-size: 18px; font-weight: 800; color: #fff; margin: 18px 0 12px 0;">$1</h1>');
+      out = out.replace(/^### (.*?)$/gm, '<h3 style="font-size: 15px; font-weight: 700; color: var(--accent); margin: 14px 0 8px 0;">$1</h3>');
+      out = out.replace(/^## (.*?)$/gm, '<h2 style="font-size: 16px; font-weight: 800; color: var(--text); margin: 16px 0 10px 0;">$1</h2>');
+      out = out.replace(/^# (.*?)$/gm, '<h1 style="font-size: 18px; font-weight: 800; color: var(--text); margin: 18px 0 12px 0;">$1</h1>');
 
       // Horizontal rules
-      out = out.replace(/^---$/gm, '<hr style="border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 14px 0;" />');
+      out = out.replace(/^---$/gm, '<hr style="border: none; border-top: 1px solid var(--card-border); margin: 14px 0;" />');
 
       // Bold & Italic & Inline code
-      out = out.replace(/\*\*(.*?)\*\*/g, '<strong style="color: #fff;">$1</strong>');
-      out = out.replace(/\*(.*?)\*/g, '<em style="color: #e2e8f0;">$1</em>');
+      out = out.replace(/\*\*(.*?)\*\*/g, '<strong style="color: var(--text);">$1</strong>');
+      out = out.replace(/\*(.*?)\*/g, '<em style="color: var(--text-muted);">$1</em>');
       out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
 
       // Unordered lists
@@ -1579,6 +1807,32 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       return out;
     }
 
+    // ==================== THEME MANAGEMENT ====================
+
+    function initTheme() {
+      const saved = localStorage.getItem('rag_theme') || 'dark';
+      setTheme(saved, false);
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      setTheme(next, true);
+    }
+
+    function setTheme(theme, notify = false) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('rag_theme', theme);
+      const icon = document.getElementById('themeToggleIcon');
+      if (icon) {
+        icon.setAttribute('data-lucide', theme === 'dark' ? 'sun' : 'moon');
+        refreshIcons(document.getElementById('themeToggleBtn'));
+      }
+      if (notify) {
+        showToast(`Switched to ${theme === 'dark' ? 'Dark' : 'Light'} theme`, 'info', 1800);
+      }
+    }
+
     function switchMainTab(tabId, btn) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -1587,6 +1841,88 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       if (tabId === 'indexerTab') loadIndexerData();
       if (tabId === 'ragBotTab') loadChatSessions();
       refreshIcons();
+    }
+
+    // ==================== CUSTOM TOAST & CONFIRMATION DIALOG ====================
+
+    function showToast(message, type = 'info', duration = 3200) {
+      const container = document.getElementById('toastContainer');
+      if (!container) return;
+
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+
+      let iconName = 'info';
+      let iconColor = '#ececec';
+      if (type === 'success') { iconName = 'check-circle-2'; iconColor = '#10b981'; }
+      else if (type === 'error') { iconName = 'alert-circle'; iconColor = '#ef4444'; }
+      else if (type === 'warning') { iconName = 'alert-triangle'; iconColor = '#f59e0b'; }
+
+      toast.innerHTML = `
+        <i data-lucide="${iconName}" style="width: 16px; height: 16px; color: ${iconColor}; flex-shrink: 0;"></i>
+        <div style="flex: 1; line-height: 1.4;">${escapeHtml(message)}</div>
+        <button style="background: none; border: none; color: #71717a; cursor: pointer; display: flex; align-items: center; padding: 2px;" onclick="this.parentElement.remove()">
+          <i data-lucide="x" style="width: 12px; height: 12px;"></i>
+        </button>
+      `;
+
+      container.appendChild(toast);
+      refreshIcons(toast);
+
+      setTimeout(() => {
+        toast.style.animation = 'toastFadeOut 0.2s forwards';
+        setTimeout(() => toast.remove(), 200);
+      }, duration);
+    }
+
+    let activeConfirmCallback = null;
+
+    function showConfirmDialog({ title, message, confirmText = 'Confirm', cancelText = 'Cancel', isDanger = false, onConfirm }) {
+      document.getElementById('confirmTitle').textContent = title || 'Confirm Action';
+      document.getElementById('confirmMessage').textContent = message || 'Are you sure you want to proceed?';
+      
+      const actionBtn = document.getElementById('confirmActionBtn');
+      const cancelBtn = document.getElementById('confirmCancelBtn');
+      const iconBox = document.getElementById('confirmIconBox');
+      const icon = document.getElementById('confirmIcon');
+
+      actionBtn.textContent = confirmText;
+      cancelBtn.textContent = cancelText;
+
+      if (isDanger) {
+        actionBtn.className = 'btn btn-danger';
+        actionBtn.style.background = 'rgba(239, 68, 68, 0.15)';
+        actionBtn.style.color = '#f87171';
+        actionBtn.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+        iconBox.style.background = 'rgba(239, 68, 68, 0.12)';
+        iconBox.style.color = '#f87171';
+        icon.setAttribute('data-lucide', 'alert-triangle');
+      } else {
+        actionBtn.className = 'btn';
+        actionBtn.style.background = 'var(--btn-primary-bg)';
+        actionBtn.style.color = 'var(--btn-primary-text)';
+        actionBtn.style.border = 'none';
+        iconBox.style.background = 'rgba(255, 255, 255, 0.08)';
+        iconBox.style.color = '#fff';
+        icon.setAttribute('data-lucide', 'help-circle');
+      }
+
+      activeConfirmCallback = onConfirm;
+      document.getElementById('customConfirmModal').classList.add('show');
+      refreshIcons(document.getElementById('customConfirmModal'));
+    }
+
+    function closeConfirmDialog(isConfirmed = false) {
+      document.getElementById('customConfirmModal').classList.remove('show');
+      if (!isConfirmed) activeConfirmCallback = null;
+    }
+
+    async function executeConfirmDialog() {
+      const cb = activeConfirmCallback;
+      closeConfirmDialog(true);
+      if (typeof cb === 'function') {
+        await cb();
+      }
     }
 
     // ==================== REPOSITORIES & FOLDERS ====================
@@ -1662,7 +1998,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     async function submitNewRepo() {
       const name = document.getElementById('newRepoName').value.trim();
       const id = document.getElementById('newRepoId').value.trim();
-      if (!name) { alert('Please enter repository name'); return; }
+      if (!name) { showToast('Please enter repository name', 'warning'); return; }
 
       const res = await fetch('/api/repos', {
         method: 'POST',
@@ -1673,23 +2009,33 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         toggleAddRepoForm();
         document.getElementById('newRepoName').value = '';
         document.getElementById('newRepoId').value = '';
+        showToast(`Repository '${name}' created successfully`, 'success');
         await loadRepos();
       } else {
         const err = await res.json();
-        alert('Error creating repo: ' + (err.detail || err));
+        showToast('Error creating repo: ' + (err.detail || err), 'error');
       }
     }
 
     async function deleteRepo(repoId) {
-      if (!confirm(`Delete repository '${repoId}' and all its registered folders?`)) return;
-      await fetch(`/api/repos/${encodeURIComponent(repoId)}`, { method: 'DELETE' });
-      await loadRepos();
+      showConfirmDialog({
+        title: 'Delete Repository',
+        message: `Are you sure you want to delete repository '${repoId}' and all its indexed data?`,
+        confirmText: 'Delete Repo',
+        isDanger: true,
+        onConfirm: async () => {
+          await fetch(`/api/repos/${encodeURIComponent(repoId)}`, { method: 'DELETE' });
+          showToast(`Repository '${repoId}' deleted`, 'info');
+          await loadRepos();
+        }
+      });
     }
 
     async function reindexRepo(repoId) {
+      showToast(`Re-indexing repository '${repoId}'...`, 'info');
       const res = await fetch(`/api/repos/${encodeURIComponent(repoId)}/reindex`, { method: 'POST' });
       const data = await res.json();
-      alert(`Re-indexed ${data.scenarios_indexed} scenarios for repository '${repoId}'!`);
+      showToast(`Re-indexed ${data.scenarios_indexed} scenarios for repository '${repoId}'!`, 'success');
       loadRepos();
     }
 
@@ -1735,7 +2081,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     async function submitAddFolder() {
       const input = document.getElementById('newFolderPath');
       const pathVal = input.value.trim();
-      if (!pathVal) { alert('Please enter a folder path'); return; }
+      if (!pathVal) { showToast('Please enter a folder path', 'warning'); return; }
 
       const res = await fetch(`/api/repos/${encodeURIComponent(activeRepoId)}/folders`, {
         method: 'POST',
@@ -1744,26 +2090,36 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       });
       if (res.ok) {
         input.value = '';
+        showToast('Folder added and indexed into watchdog', 'success');
         await loadRepos();
         await loadFoldersForActiveRepo();
         pollWatchdogStatus();
       } else {
         const err = await res.json();
-        alert('Error adding folder: ' + (err.detail || err));
+        showToast('Error adding folder: ' + (err.detail || err), 'error');
       }
     }
 
     async function removeFolder(folderId) {
-      if (!confirm('Remove this folder from indexing?')) return;
-      await fetch(`/api/folders/${encodeURIComponent(folderId)}`, { method: 'DELETE' });
-      await loadRepos();
-      await loadFoldersForActiveRepo();
+      showConfirmDialog({
+        title: 'Remove Folder',
+        message: 'Remove this folder from indexing and watchdog monitoring?',
+        confirmText: 'Remove Folder',
+        isDanger: true,
+        onConfirm: async () => {
+          await fetch(`/api/folders/${encodeURIComponent(folderId)}`, { method: 'DELETE' });
+          showToast('Folder removed from index', 'info');
+          await loadRepos();
+          await loadFoldersForActiveRepo();
+        }
+      });
     }
 
     async function reindexFolder(folderId) {
+      showToast('Re-indexing folder scenarios...', 'info');
       const res = await fetch(`/api/folders/${encodeURIComponent(folderId)}/reindex`, { method: 'POST' });
       const data = await res.json();
-      alert(`Re-indexed ${data.scenarios_indexed} scenarios for this folder!`);
+      showToast(`Re-indexed ${data.scenarios_indexed} scenarios for this folder!`, 'success');
       loadRepos();
     }
 
@@ -1800,53 +2156,52 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     // ==================== RAG BOT CHAT ====================
 
     async function loadChatSessions() {
-      const res = await fetch('/api/chat-sessions?repo_id=' + encodeURIComponent(activeRepoId));
-      const data = await res.json();
-      const list = document.getElementById('chatSessionsList');
-      list.innerHTML = '';
-      const sessions = data.chat_sessions || [];
+      try {
+        const res = await fetch('/api/chat-sessions' + (activeRepoId ? '?repo_id=' + encodeURIComponent(activeRepoId) : ''));
+        const data = await res.json();
+        const list = document.getElementById('chatSessionsList');
+        if (!list) return;
+        list.innerHTML = '';
+        const sessions = data.chat_sessions || [];
 
-      if (sessions.length === 0) {
-        list.innerHTML = '<p style="color: var(--text-muted); font-size: 12px; padding: 10px;">No sessions for this repo.</p>';
-        if (!activeChatId) createNewChatSession();
-        return;
-      }
+        if (sessions.length === 0) {
+          list.innerHTML = '<p style="color: var(--text-muted); font-size: 12px; padding: 12px 10px;">No chat sessions.</p>';
+          activeChatId = null;
+          return;
+        }
 
-      sessions.forEach(s => {
-        const div = document.createElement('div');
-        div.className = 'session-item' + (s.chat_id === activeChatId ? ' active' : '');
-        div.onclick = () => selectChatSession(s.chat_id);
-        div.innerHTML = `
-          <i data-lucide="message-square" style="width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0;"></i>
-          <div style="overflow: hidden; flex: 1;">
-            <div class="session-title">${escapeHtml(s.title || 'Conversation')}</div>
-            <div class="session-time">${String(s.updated_at || s.created_at).slice(0, 16)}</div>
-          </div>
-          <button class="btn btn-danger" aria-label="Delete chat session" style="padding: 2px 6px; font-size: 10px;" onclick="event.stopPropagation(); deleteChatSession('${s.chat_id}')"><i data-lucide="trash-2" style="width: 10px; height: 10px;"></i></button>
-        `;
-        list.appendChild(div);
-      });
+        sessions.forEach(s => {
+          const div = document.createElement('div');
+          div.className = 'session-item' + (s.chat_id === activeChatId ? ' active' : '');
+          div.onclick = () => selectChatSession(s.chat_id);
+          div.innerHTML = `
+            <i data-lucide="message-square" style="width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0;"></i>
+            <div style="overflow: hidden; flex: 1;">
+              <div class="session-title">${escapeHtml(s.title || 'Conversation')}</div>
+              <div class="session-time">${String(s.updated_at || s.created_at).slice(0, 16)}</div>
+            </div>
+            <button class="btn btn-danger" aria-label="Delete chat session" style="padding: 2px 6px; font-size: 10px;" onclick="event.stopPropagation(); deleteChatSession('${s.chat_id}')"><i data-lucide="trash-2" style="width: 10px; height: 10px;"></i></button>
+          `;
+          list.appendChild(div);
+        });
 
-      refreshIcons(list);
+        refreshIcons(list);
 
-      if (!activeChatId && sessions.length > 0) {
-        selectChatSession(sessions[0].chat_id);
+        if (!activeChatId && sessions.length > 0) {
+          selectChatSession(sessions[0].chat_id);
+        }
+      } catch (err) {
+        console.error('Error loading chat sessions:', err);
       }
     }
 
-    async function createNewChatSession() {
-      const res = await fetch('/api/chat-sessions/new', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_id: activeRepoId, title: 'New Conversation' })
-      });
-      const data = await res.json();
-      activeChatId = data.chat_id;
+    function createNewChatSession() {
+      activeChatId = null;
       document.getElementById('chatMessages').innerHTML = `
         <div class="chat-bubble assistant">
           <div style="display: flex; align-items: flex-start; gap: 10px;">
             <i data-lucide="sparkles" style="width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; margin-top: 2px;"></i>
-            <div>Started new chat session (<code>${activeChatId}</code>) scoped to repository <b>${activeRepoId}</b>. What would you like to verify?</div>
+            <div>Ready for a new inquiry in repository <b>${activeRepoId}</b>. What test scenario or requirement would you like to verify?</div>
           </div>
         </div>
       `;
@@ -1891,20 +2246,55 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     async function deleteChatSession(chatId) {
-      await fetch('/api/chat-sessions/' + encodeURIComponent(chatId), { method: 'DELETE' });
-      if (activeChatId === chatId) activeChatId = null;
-      loadChatSessions();
+      try {
+        await fetch('/api/chat-sessions/' + encodeURIComponent(chatId), { method: 'DELETE' });
+        showToast('Chat session deleted', 'info');
+        if (activeChatId === chatId) {
+          activeChatId = null;
+          document.getElementById('chatMessages').innerHTML = `
+            <div class="chat-bubble assistant">
+              <div style="display: flex; align-items: flex-start; gap: 10px;">
+                <i data-lucide="sparkles" style="width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; margin-top: 2px;"></i>
+                <div>Chat session deleted. What would you like to verify?</div>
+              </div>
+            </div>
+          `;
+          document.getElementById('citationsList').innerHTML = '';
+          refreshIcons(document.getElementById('chatMessages'));
+        }
+        await loadChatSessions();
+      } catch (err) {
+        showToast('Error deleting session: ' + err, 'error');
+      }
     }
 
     async function clearAllChatSessions() {
-      if (!confirm(`Clear all chat sessions and reset cache for repository '${activeRepoId}'?`)) return;
-      try {
-        await fetch('/api/chat-sessions/clear?repo_id=' + encodeURIComponent(activeRepoId), { method: 'DELETE' });
-        activeChatId = null;
-        createNewChatSession();
-      } catch (err) {
-        alert('Error clearing sessions: ' + err);
-      }
+      showConfirmDialog({
+        title: 'Clear Chat Sessions',
+        message: 'Clear all chat sessions and reset semantic cache for this repository?',
+        confirmText: 'Clear All',
+        isDanger: true,
+        onConfirm: async () => {
+          try {
+            await fetch('/api/chat-sessions-clear', { method: 'POST' });
+            activeChatId = null;
+            document.getElementById('chatMessages').innerHTML = `
+              <div class="chat-bubble assistant">
+                <div style="display: flex; align-items: flex-start; gap: 10px;">
+                  <i data-lucide="sparkles" style="width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; margin-top: 2px;"></i>
+                  <div>All chat sessions cleared and cache reset. What would you like to verify?</div>
+                </div>
+              </div>
+            `;
+            document.getElementById('citationsList').innerHTML = '';
+            refreshIcons(document.getElementById('chatMessages'));
+            showToast('All chat sessions cleared & cache reset', 'success');
+            await loadChatSessions();
+          } catch (err) {
+            showToast('Error clearing sessions: ' + err, 'error');
+          }
+        }
+      });
     }
 
     // ==================== ANTHROPIC-STYLE REAL-TIME STREAMING AGENT LOOP ====================
@@ -2140,6 +2530,26 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       }
     }
 
+    async function openFileLocation(filePath, event) {
+      if (event) event.stopPropagation();
+      if (!filePath) return;
+      try {
+        const res = await fetch('/api/open-file-location', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_path: filePath })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('Revealed feature file in File Explorer', 'success');
+        } else {
+          showToast('Could not open location: ' + (data.detail || 'File not found on disk'), 'error');
+        }
+      } catch (err) {
+        showToast('Error opening folder: ' + err, 'error');
+      }
+    }
+
     function addUserMessage(text) {
       const box = document.getElementById('chatMessages');
       const div = document.createElement('div');
@@ -2191,16 +2601,32 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           summaryText = lines.slice(0, 2).join(' ') || 'Evaluation completed against test scenarios in the repository.';
         }
 
-        // Build Citation pills
+        // Build Citation pills (only for cited scenarios with verified coverage)
         let citationPillsHtml = '';
         if (citations && citations.length > 0) {
-          const pills = citations.slice(0, 4).map(c => {
-            const fileName = getFileName(c.file_path);
-            const pct = c.match_percentage !== undefined ? c.match_percentage : Math.round((c.score || 0) * 10);
-            const pillColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
-            return `<span class="citation-pill" title="Click to view Gherkin steps" onclick="openScenarioModal('${c.scenario_id}')"><i data-lucide="file-code-2" style="width: 12px; height: 12px;"></i> <strong>${escapeHtml(c.scenario_name)}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${pillColor}; font-size: 10px; padding: 1px 5px; margin-left: 4px;">${pct}%</span></span>`;
-          }).join('');
-          citationPillsHtml = `<div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;">${pills}</div>`;
+          const citedList = citations.filter(c => c.is_cited && c.match_percentage > 0);
+          if (citedList.length > 0) {
+            const pills = citedList.slice(0, 4).map(c => {
+              const fileName = getFileName(c.file_path);
+              const pct = c.match_percentage || 0;
+              const pillColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
+              const safePath = escapeHtml(c.file_path || '');
+              return `
+                <div style="display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; margin-top: 6px;">
+                  <span class="citation-pill" title="Click to view verified Gherkin steps" onclick="openScenarioModal('${c.scenario_id}')">
+                    <i data-lucide="file-code-2" style="width: 12px; height: 12px;"></i>
+                    <strong>${escapeHtml(c.scenario_name)}</strong>
+                    <span style="opacity: 0.8">(${fileName}:${c.line_number})</span>
+                    <span class="badge" style="background: rgba(255,255,255,0.08); color: ${pillColor}; font-size: 10px; padding: 1px 5px; margin-left: 4px;">${pct}% Coverage</span>
+                  </span>
+                  <button class="btn-icon-folder" title="Open feature folder in Explorer (${safePath})" onclick="openFileLocation('${safePath}', event)">
+                    <i data-lucide="folder" style="width: 13px; height: 13px;"></i>
+                  </button>
+                </div>
+              `;
+            }).join('');
+            citationPillsHtml = `<div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px;">${pills}</div>`;
+          }
         }
 
         div.innerHTML = `
@@ -2223,22 +2649,39 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         // Standard conversational chat bubble
         div.innerHTML = thoughtAccordionHtml + formatMarkdown(text);
         if (citations && citations.length > 0) {
-          const p = document.createElement('div');
-          p.style.marginTop = '12px';
-          p.style.display = 'flex';
-          p.style.flexWrap = 'wrap';
-          p.style.gap = '6px';
-          citations.slice(0, 4).forEach(c => {
-            const pill = document.createElement('span');
-            pill.className = 'citation-pill';
-            const fileName = getFileName(c.file_path);
-            const pct = c.match_percentage !== undefined ? c.match_percentage : 0;
-            const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
-            pill.innerHTML = `<i data-lucide="file-code-2" style="width: 12px; height: 12px;"></i> <strong>${escapeHtml(c.scenario_name)}</strong> <span style="opacity: 0.8">(${fileName}:${c.line_number})</span> <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 10px; margin-left: 4px;">${pct}%</span>`;
-            pill.onclick = () => openScenarioModal(c.scenario_id);
-            p.appendChild(pill);
-          });
-          div.appendChild(p);
+          const citedList = citations.filter(c => c.is_cited && c.match_percentage > 0);
+          if (citedList.length > 0) {
+            const p = document.createElement('div');
+            p.style.marginTop = '12px';
+            p.style.display = 'flex';
+            p.style.flexWrap = 'wrap';
+            p.style.gap = '4px';
+            citedList.slice(0, 4).forEach(c => {
+              const fileName = getFileName(c.file_path);
+              const pct = c.match_percentage || 0;
+              const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
+              const safePath = escapeHtml(c.file_path || '');
+              const itemDiv = document.createElement('div');
+              itemDiv.style.display = 'inline-flex';
+              itemDiv.style.alignItems = 'center';
+              itemDiv.style.gap = '4px';
+              itemDiv.style.marginRight = '6px';
+              itemDiv.style.marginTop = '6px';
+              itemDiv.innerHTML = `
+                <span class="citation-pill" onclick="openScenarioModal('${c.scenario_id}')">
+                  <i data-lucide="file-code-2" style="width: 12px; height: 12px;"></i>
+                  <strong>${escapeHtml(c.scenario_name)}</strong>
+                  <span style="opacity: 0.8">(${fileName}:${c.line_number})</span>
+                  <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 10px; margin-left: 4px;">${pct}% Coverage</span>
+                </span>
+                <button class="btn-icon-folder" title="Open feature folder in Explorer (${safePath})" onclick="openFileLocation('${safePath}', event)">
+                  <i data-lucide="folder" style="width: 13px; height: 13px;"></i>
+                </button>
+              `;
+              p.appendChild(itemDiv);
+            });
+            div.appendChild(p);
+          }
         }
       }
 
@@ -2260,14 +2703,22 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         card.onclick = () => openScenarioModal(c.scenario_id);
         const fileName = getFileName(c.file_path);
         const pct = c.match_percentage !== undefined ? c.match_percentage : 0;
-        const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
+        const isCited = c.is_cited && pct > 0;
+        const badgeColor = isCited ? (pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)')) : '#64748b';
+        const badgeLabel = isCited ? `${pct}% Coverage` : '0% (Not Relevant)';
+        const safePath = escapeHtml(c.file_path || '');
         card.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
-            <div class="title" style="flex: 1;"><i data-lucide="file-check-2" style="width: 14px; height: 14px; color: var(--accent); flex-shrink: 0;"></i> <span>${escapeHtml(c.scenario_name)}</span></div>
-            <span class="badge" style="background: rgba(255,255,255,0.06); color: ${badgeColor}; font-size: 11px;">${pct}%</span>
+            <div class="title" style="flex: 1;"><i data-lucide="${isCited ? 'file-check-2' : 'file-minus'}" style="width: 14px; height: 14px; color: ${isCited ? 'var(--accent)' : '#64748b'}; flex-shrink: 0;"></i> <span>${escapeHtml(c.scenario_name)}</span></div>
+            <span class="badge" style="background: rgba(255,255,255,0.06); color: ${badgeColor}; font-size: 10.5px;">${badgeLabel}</span>
           </div>
           <div class="meta" style="margin-top: 6px;">Feature: ${escapeHtml(c.feature_title || '')}</div>
-          <div class="meta" style="color: var(--accent);">${escapeHtml(fileName)} : Line ${c.line_number}</div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+            <div class="meta" style="color: var(--accent); margin-top: 0;">${escapeHtml(fileName)} : Line ${c.line_number}</div>
+            <button class="btn-icon-folder" title="Open feature folder in Explorer" style="padding: 2px 7px; font-size: 10.5px;" onclick="openFileLocation('${safePath}', event)">
+              <i data-lucide="folder" style="width: 12px; height: 12px;"></i> Open
+            </button>
+          </div>
         `;
         list.appendChild(card);
       });
@@ -2289,17 +2740,25 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         document.getElementById('modalTitle').innerHTML = `<i data-lucide="file-code" style="width: 18px; height: 18px; color: var(--accent);"></i> <span>${escapeHtml(sc.scenario_name)}</span>`;
         const fileName = getFileName(sc.file_path);
         const featName = sc.feature_name || sc.feature_title || 'Feature';
+        const safePath = escapeHtml(sc.file_path || '');
         document.getElementById('modalMeta').innerHTML = `
-          <div><strong>Feature:</strong> ${escapeHtml(featName)}</div>
-          <div style="margin-top: 4px;"><strong>Location:</strong> <code style="color: var(--accent);">${escapeHtml(fileName)} (Line ${sc.line_number})</code></div>
-          <div style="margin-top: 4px; font-size: 12px; opacity: 0.8;">${escapeHtml(sc.file_path)}</div>
-          ${sc.tags && sc.tags.length ? `<div style="margin-top: 6px;">${sc.tags.map(t => `<span class="badge" style="background: rgba(56,189,248,0.2); color: var(--accent); font-size: 11px; margin-right: 4px;">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+            <div>
+              <div><strong>Feature:</strong> ${escapeHtml(featName)}</div>
+              <div style="margin-top: 4px;"><strong>Location:</strong> <code style="color: var(--accent);">${escapeHtml(fileName)} (Line ${sc.line_number})</code></div>
+              <div style="margin-top: 4px; font-size: 12px; opacity: 0.8;">${safePath}</div>
+            </div>
+            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 11.5px; display: flex; align-items: center; gap: 6px; flex-shrink: 0;" onclick="openFileLocation('${safePath}', event)">
+              <i data-lucide="folder-open" style="width: 14px; height: 14px; color: var(--accent);"></i> Reveal in Explorer
+            </button>
+          </div>
+          ${sc.tags && sc.tags.length ? `<div style="margin-top: 8px;">${sc.tags.map(t => `<span class="badge" style="background: rgba(255,255,255,0.06); border: 1px solid #383838; color: #ececec; font-size: 11px; margin-right: 4px;">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
         `;
         document.getElementById('modalGherkin').textContent = sc.raw_gherkin || sc.canonical_text;
         document.getElementById('scenarioModal').classList.add('show');
         refreshIcons(document.getElementById('scenarioModal'));
       } catch (e) {
-        alert('Could not load scenario details: ' + e.message);
+        showToast('Could not load scenario details: ' + e.message, 'error');
       }
     }
 
@@ -2327,7 +2786,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       if (!window.activeReportId || !window.reportStore[window.activeReportId]) return;
       const text = window.reportStore[window.activeReportId].text;
       navigator.clipboard.writeText(text).then(() => {
-        alert('Full evaluation report copied to clipboard!');
+        showToast('Full evaluation report copied to clipboard!', 'success');
       });
     }
 
@@ -2335,6 +2794,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       const wrapper = btn.closest('.code-block-wrapper');
       const code = wrapper.querySelector('.gherkin-viewer').textContent;
       navigator.clipboard.writeText(code).then(() => {
+        showToast('Gherkin code copied to clipboard', 'success');
         const oldHtml = btn.innerHTML;
         btn.innerHTML = '<i data-lucide="check" style="width: 12px; height: 12px;"></i> Copied!';
         refreshIcons(btn);
@@ -2427,6 +2887,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
     // Initial Load
     window.onload = () => {
+      initTheme();
       loadRepos();
       pollWatchdogStatus();
       pollRepoStatus();

@@ -629,6 +629,13 @@ class StateDatabase:
 
     def _row_to_scenario(self, r: sqlite3.Row) -> ScenarioChunk:
         feat = r["feature_name"] or ""
+        raw_g = r["raw_gherkin"] or ""
+        steps_list = []
+        if raw_g:
+            for line in raw_g.splitlines():
+                l_str = line.strip()
+                if any(l_str.startswith(kw) for kw in ("Given ", "When ", "Then ", "And ", "But ", "* ")):
+                    steps_list.append(l_str)
         return ScenarioChunk(
             scenario_id=r["scenario_id"],
             repository_id=r["repo_id"],
@@ -639,8 +646,9 @@ class StateDatabase:
             scenario_name=r["scenario_name"],
             scenario_type=r["scenario_type"],
             tags=json.loads(r["tags_json"] or "[]"),
+            steps=steps_list,
             canonical_text=r["canonical_text"] or "",
-            raw_gherkin=r["raw_gherkin"] or "",
+            raw_gherkin=raw_g,
             content_hash=r["content_hash"],
         )
 
@@ -1082,7 +1090,7 @@ class StateDatabase:
         """Clears chat history, sessions, and semantic cache from SQLite."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            if repo_id:
+            if repo_id and repo_id not in ("all", ""):
                 cursor.execute("""
                     DELETE FROM chat_messages 
                     WHERE chat_id IN (SELECT chat_id FROM chat_sessions WHERE repo_id = ?)

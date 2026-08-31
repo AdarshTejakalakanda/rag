@@ -103,22 +103,23 @@ class RAGChatEngine:
         }
         t_rerank = time.time()
 
-        # Format candidates context with calibrated match percentages
+        # Format candidates context for LLM Judge
         def format_context(cand_list):
             lines = []
             cits = []
             for idx, (sc, score, meta) in enumerate(cand_list, start=1):
-                try:
-                    score_val = float(score)
-                    match_pct = round((1.0 / (1.0 + math.exp(-score_val))) * 100.0, 1)
-                except Exception:
-                    match_pct = 50.0
+                steps = sc.steps or []
+                if not steps and sc.raw_gherkin:
+                    steps = [l.strip() for l in sc.raw_gherkin.splitlines() if any(l.strip().startswith(kw) for kw in ("Given ", "When ", "Then ", "And ", "But ", "* "))]
+                if not steps and sc.canonical_text:
+                    steps = [l.strip() for l in sc.canonical_text.splitlines() if l.strip()]
+
+                steps_str = "\n".join(f"      {st}" for st in steps[:10]) if steps else "      (No explicit steps recorded)"
 
                 lines.append(
                     f"[{idx}] Feature: {sc.feature_title}\n"
                     f"    Scenario: {sc.scenario_name} ({Path(sc.file_path).name}:{sc.line_number})\n"
-                    f"    Relevance Match: {match_pct}%\n"
-                    f"    Steps:\n" + "\n".join(f"      {st}" for st in sc.steps[:5])
+                    f"    Steps:\n{steps_str}"
                 )
                 cits.append({
                     "scenario_id": sc.scenario_id,
@@ -126,8 +127,10 @@ class RAGChatEngine:
                     "feature_title": sc.feature_title,
                     "file_path": sc.file_path,
                     "line_number": sc.line_number,
-                    "score": float(score),
-                    "match_percentage": match_pct,
+                    "retrieval_relevance_score": float(score),
+                    "coverage_percentage": 0.0,
+                    "match_percentage": 0.0,
+                    "is_cited": False,
                     "repo_id": sc.repo_id,
                 })
             c_str = "\n\n".join(lines) if lines else "No matching test scenarios found in repository."
@@ -353,14 +356,31 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
                 sc_name = c["scenario_name"].lower()
                 f_name = Path(c.get("file_path", "")).name.lower()
                 is_cited = sc_name in reply_lower or (f_name and f_name in reply_lower and sc_name[:15] in reply_lower)
-                if is_cited and llm_match_pct is not None:
-                    c["match_percentage"] = llm_match_pct
+
+                sc_match = None
+                if is_cited:
+                    sc_pattern = rf"{re.escape(sc_name[:20])}[\s\S]*?(?:Match|Coverage)[:\s]*?(\d{{1,3}})%"
+                    m_sc = re.search(sc_pattern, reply_lower)
+                    if m_sc:
+                        try:
+                            sc_match = float(m_sc.group(1))
+                        except Exception:
+                            pass
+
+                if is_cited:
+                    assigned_pct = sc_match if sc_match is not None else (llm_match_pct if llm_match_pct is not None else 50.0)
+                    c["match_percentage"] = assigned_pct
+                    c["coverage_percentage"] = assigned_pct
+                    c["status"] = "FULL" if assigned_pct >= 90 else "PARTIAL"
                     c["is_cited"] = True
                 else:
-                    c["is_cited"] = is_cited
+                    c["match_percentage"] = 0.0
+                    c["coverage_percentage"] = 0.0
+                    c["status"] = "NOT_RELEVANT"
+                    c["is_cited"] = False
 
-            # Sort citations: cited scenarios first, then by match_percentage descending
-            citations_data.sort(key=lambda x: (1 if x.get("is_cited") else 0, x.get("match_percentage", 0)), reverse=True)
+            # Sort citations: cited scenarios first (by coverage_percentage descending), then distractors (0%)
+            citations_data.sort(key=lambda x: (1 if x.get("is_cited") else 0, x.get("coverage_percentage", 0)), reverse=True)
 
         total_dur_ms = int((time.time() - start_time) * 1000)
 
