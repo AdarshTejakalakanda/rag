@@ -284,6 +284,25 @@ class MilvusStore:
         if to_del:
             self._save_cache()
 
+    def delete_by_ids(self, scenario_ids: List[str]) -> None:
+        """Deletes specific scenario embeddings by scenario_id list."""
+        if not scenario_ids:
+            return
+        if self.collection:
+            try:
+                expr = f'scenario_id in {json.dumps(list(scenario_ids))}'
+                self.collection.delete(expr)
+                self.collection.flush()
+            except Exception:
+                pass
+        to_save = False
+        for s_id in scenario_ids:
+            if s_id in self._local_fallback_store:
+                self._local_fallback_store.pop(s_id, None)
+                to_save = True
+        if to_save:
+            self._save_cache()
+
     def clear_repo(self, repo_id: str) -> None:
         """Removes all embeddings for a specific repository."""
         if self.collection:

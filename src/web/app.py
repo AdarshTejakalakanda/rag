@@ -1117,6 +1117,17 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       flex: 1;
       min-width: 0;
       cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      color: inherit;
+      text-align: left;
+    }
+    .evidence-main:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
     }
     .evidence-icon-wrap {
       width: 28px;
@@ -2728,7 +2739,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
               const rawPath = c.file_path || '';
               return `
                 <div class="evidence-row">
-                  <div class="evidence-main" onclick="openScenarioModal('${c.scenario_id}')" title="Click to view verified Gherkin steps">
+                  <button class="evidence-main" type="button" onclick="openScenarioModal('${c.scenario_id}')" title="Click to view verified Gherkin steps">
                     <div class="evidence-icon-wrap">
                       <i data-lucide="file-check" style="width: 14px; height: 14px; color: ${pillColor};"></i>
                     </div>
@@ -2739,7 +2750,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
                         <span>${escapeHtml(fileName)} : Line ${c.line_number}</span>
                       </div>
                     </div>
-                  </div>
+                  </button>
                   <div class="evidence-actions">
                     <span class="evidence-badge" style="color: ${pillColor}; background: rgba(255,255,255,0.06);">${pct}% Coverage</span>
                     <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Reveal in File Explorer" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
@@ -2782,7 +2793,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
               const rawPath = c.file_path || '';
               return `
                 <div class="evidence-row">
-                  <div class="evidence-main" onclick="openScenarioModal('${c.scenario_id}')">
+                  <button class="evidence-main" type="button" onclick="openScenarioModal('${c.scenario_id}')" title="Click to view verified Gherkin steps">
                     <div class="evidence-icon-wrap">
                       <i data-lucide="file-check" style="width: 14px; height: 14px; color: ${pillColor};"></i>
                     </div>
@@ -2790,7 +2801,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
                       <div class="evidence-name">${escapeHtml(c.scenario_name)}</div>
                       <div class="evidence-file-meta"><span>${escapeHtml(fileName)} : Line ${c.line_number}</span></div>
                     </div>
-                  </div>
+                  </button>
                   <div class="evidence-actions">
                     <span class="evidence-badge" style="color: ${pillColor};">${pct}% Coverage</span>
                     <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open in Explorer" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">

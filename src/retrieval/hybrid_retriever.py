@@ -51,22 +51,9 @@ class HybridRetriever:
         else:
             query_text = str(query)
 
-        # Dynamic auto-sync: Ensure BM25 and Milvus memory pools are synced with SQLite
+        # Dynamic auto-sync: Reconcile BM25 and Milvus memory pools with SQLite
         if self.state_db and repo_id:
-            repo_scenarios = self.state_db.get_all_scenarios(repo_id=repo_id)
-            if repo_scenarios:
-                bm25_repo_count = sum(1 for s in self.bm25.scenarios if s.repository_id == repo_id)
-                if bm25_repo_count < len(repo_scenarios):
-                    all_scenarios = self.state_db.get_all_scenarios()
-                    self.bm25.index_scenarios(all_scenarios)
-                if hasattr(self.milvus, "_local_fallback_store"):
-                    milvus_repo_count = self.milvus.count(repo_id=repo_id)
-                    if milvus_repo_count < len(repo_scenarios):
-                        self.milvus._load_cache()
-                        if self.milvus.count(repo_id=repo_id) < len(repo_scenarios):
-                            texts = [s.canonical_text for s in repo_scenarios]
-                            embeddings = self.embedder.encode(texts)
-                            self.milvus.upsert(repo_scenarios, embeddings)
+            self._sync_repo_if_needed(repo_id)
 
         # 1. BM25 Lexical Retrieval (Top 50)
         bm25_hits = self.bm25.search(query_text, top_k=self.config.bm25_top_k, repo_id=repo_id)
@@ -174,6 +161,78 @@ class HybridRetriever:
         )
 
         return reranked_top10
+
+    def _sync_repo_if_needed(self, repo_id: str) -> None:
+        """
+        Reconciles repository-scoped scenario IDs and content hashes against SQLite.
+        Removes records absent from SQLite, rebuilds or upserts changed records, and
+        clears stale index records when SQLite is empty while preserving unchanged records.
+        """
+        if not self.state_db or not repo_id:
+            return
+
+        sqlite_scenarios = self.state_db.get_all_scenarios(repo_id=repo_id)
+        sqlite_map = {s.scenario_id: s for s in sqlite_scenarios}
+        sqlite_ids = set(sqlite_map.keys())
+        sqlite_hash_map = {s.scenario_id: s.content_hash for s in sqlite_scenarios}
+
+        # 1. BM25 reconciliation: compare repository-scoped IDs and content hashes
+        bm25_repo_scenarios = [s for s in self.bm25.scenarios if s.repository_id == repo_id]
+        bm25_ids = {s.scenario_id for s in bm25_repo_scenarios}
+        bm25_hash_map = {s.scenario_id: s.content_hash for s in bm25_repo_scenarios}
+
+        bm25_needs_sync = (bm25_ids != sqlite_ids) or any(
+            bm25_hash_map.get(s_id) != h for s_id, h in sqlite_hash_map.items()
+        )
+        if bm25_needs_sync:
+            all_scenarios = self.state_db.get_all_scenarios()
+            self.bm25.index_scenarios(all_scenarios)
+
+        # 2. Milvus reconciliation: compare repository-scoped IDs and content hashes
+        if hasattr(self.milvus, "_local_fallback_store"):
+            milvus_records = {
+                s_id: rec for s_id, rec in self.milvus._local_fallback_store.items()
+                if rec.get("repo_id") == repo_id
+            }
+            milvus_ids = set(milvus_records.keys())
+            milvus_hash_map = {s_id: rec.get("content_hash") for s_id, rec in milvus_records.items()}
+
+            stale_milvus_ids = list(milvus_ids - sqlite_ids)
+            if stale_milvus_ids:
+                self.milvus.delete_by_ids(stale_milvus_ids)
+
+            missing_or_changed = [
+                s for s in sqlite_scenarios
+                if s.scenario_id not in milvus_ids or milvus_hash_map.get(s.scenario_id) != s.content_hash
+            ]
+            if missing_or_changed:
+                texts = [s.canonical_text for s in missing_or_changed]
+                embeddings = self.embedder.encode(texts)
+                self.milvus.upsert(missing_or_changed, embeddings)
+        elif self.milvus.collection:
+            # Standalone Milvus Collection connected
+            try:
+                existing = self.milvus.collection.query(
+                    expr=f'repo_id == "{repo_id}"',
+                    output_fields=["scenario_id", "content_hash"]
+                )
+                milvus_ids = {r["scenario_id"] for r in existing}
+                milvus_hash_map = {r["scenario_id"]: r.get("content_hash") for r in existing}
+
+                stale_milvus_ids = list(milvus_ids - sqlite_ids)
+                if stale_milvus_ids:
+                    self.milvus.delete_by_ids(stale_milvus_ids)
+
+                missing_or_changed = [
+                    s for s in sqlite_scenarios
+                    if s.scenario_id not in milvus_ids or milvus_hash_map.get(s.scenario_id) != s.content_hash
+                ]
+                if missing_or_changed:
+                    texts = [s.canonical_text for s in missing_or_changed]
+                    embeddings = self.embedder.encode(texts)
+                    self.milvus.upsert(missing_or_changed, embeddings)
+            except Exception as e:
+                print(f"[HybridRetriever] Notice: Milvus reconciliation ({e})")
 
     def retrieve(
         self,
