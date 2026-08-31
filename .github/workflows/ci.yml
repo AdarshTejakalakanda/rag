@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Pytest & Benchmarks (${{ matrix.os }}, Python ${{ matrix.python-version }})
@@ -22,9 +25,6 @@ jobs:
         python-version: ["3.10", "3.11"]
 
     env:
-      HF_HOME: ${{ runner.os == 'Windows' && 'C:\\Users\\runneradmin\\.cache\\huggingface' || '/home/runner/.cache/huggingface' }}
-      TORCH_HOME: ${{ runner.os == 'Windows' && 'C:\\Users\\runneradmin\\.cache\\torch' || '/home/runner/.cache/torch' }}
-      SENTENCE_TRANSFORMERS_HOME: ${{ runner.os == 'Windows' && 'C:\\Users\\runneradmin\\.cache\\sentence_transformers' || '/home/runner/.cache/sentence_transformers' }}
       PYTHONPATH: .
 
     steps:
@@ -45,9 +45,6 @@ jobs:
             ~/.cache/huggingface
             ~/.cache/torch
             ~/.cache/sentence_transformers
-            C:\Users\runneradmin\.cache\huggingface
-            C:\Users\runneradmin\.cache\torch
-            C:\Users\runneradmin\.cache\sentence_transformers
           key: ml-models-${{ runner.os }}-${{ hashFiles('configs/config.yaml') }}
           restore-keys: |
             ml-models-${{ runner.os }}-
