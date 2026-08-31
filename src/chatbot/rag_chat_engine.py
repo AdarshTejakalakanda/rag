@@ -154,6 +154,22 @@ class RAGChatEngine:
         history_snippet = "\n".join(f"{h['role'].upper()}: {h['content']}" for h in history[-4:])
 
         def build_prompt(c_str):
+            if not candidates:
+                return f"""Target Repository ID: {repo_id}
+
+RECENT CONVERSATION:
+{history_snippet}
+
+RETRIEVED GHERKIN SCENARIOS FROM REPOSITORY:
+No matching test scenarios found in repository '{repo_id}' (0 candidates retrieved).
+
+REQUIREMENT / INQUIRY TO VERIFY:
+{user_message}
+
+Please evaluate the requirement strictly against the repository. Since zero candidate scenarios match in repository '{repo_id}', clearly report:
+1. Coverage Status: Not Covered / Gap (0%)
+2. Explanation: State clearly that no automated scenarios matching this requirement were found in repository '{repo_id}'. Do NOT invent citations or fabricate test steps."""
+
             return f"""Target Repository ID: {repo_id}
 
 RECENT CONVERSATION:
@@ -242,10 +258,17 @@ Please evaluate the requirement strictly against the retrieved Gherkin scenarios
                 retry_strategy = "LEXICAL_HEAVY"
                 retry_reason = "Initial candidates lacked specific keyword/action step matches."
 
+            if len(candidates) == 0:
+                sufficiency_detail = f"Sufficiency: NO_CANDIDATES · Zero matching scenarios in repo '{repo_id}'"
+            elif needs_retry:
+                sufficiency_detail = f"Sufficiency: INSUFFICIENT_EVIDENCE · Strategy: {retry_strategy}"
+            else:
+                sufficiency_detail = "Sufficiency: SUFFICIENT_EVIDENCE · Strategy: NONE"
+
             stage_judge_1 = {
                 "id": "judge_1",
                 "name": "LLM Grounded Evaluation (Call 1)",
-                "detail": f"Sufficiency: {'INSUFFICIENT_EVIDENCE' if needs_retry else 'SUFFICIENT_EVIDENCE'} · Strategy: {retry_strategy}",
+                "detail": sufficiency_detail,
                 "status": "completed",
                 "duration_ms": dur_call1,
             }

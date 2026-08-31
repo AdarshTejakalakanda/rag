@@ -529,6 +529,7 @@ class StateDatabase:
         now = datetime.now().isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            target_repo = repo_id or (scenarios[0].repository_id if scenarios else "default")
             for s in scenarios:
                 r_id = repo_id or s.repository_id or "default"
                 c_hash = s.content_hash or fast_hash(s.canonical_text + s.raw_gherkin)
@@ -541,7 +542,7 @@ class StateDatabase:
                     VALUES (?, ?, ?, ?, 1, ?, ?)
                     ON CONFLICT(repo_id, file_path) DO UPDATE SET
                         indexed_at = excluded.indexed_at
-                """, (ff_id, s.repository_id, s.file_path, c_hash, now, now))
+                """, (ff_id, r_id, s.file_path, c_hash, now, now))
 
                 cursor.execute("""
                     INSERT INTO scenarios (
@@ -565,7 +566,7 @@ class StateDatabase:
                         milvus_id = excluded.milvus_id,
                         indexed_at = excluded.indexed_at
                 """, (
-                    s.scenario_id, ff_id, s.repository_id, s.file_path, s.line_number,
+                    s.scenario_id, ff_id, r_id, s.file_path, s.line_number,
                     s.feature_name, s.scenario_name, s.scenario_type, json.dumps(s.tags),
                     s.canonical_text, s.raw_gherkin, c_hash, milvus_id, now
                 ))
@@ -573,10 +574,10 @@ class StateDatabase:
             # Update scenario count in repository
             cursor.execute("""
                 UPDATE repositories SET
-                    scenario_count = (SELECT COUNT(*) FROM scenarios WHERE repo_id = repositories.repo_id),
+                    scenario_count = (SELECT COUNT(*) FROM scenarios WHERE repo_id = ?),
                     last_indexed_at = ?
                 WHERE repo_id = ?
-            """, (now, scenarios[0].repository_id))
+            """, (target_repo, now, target_repo))
             conn.commit()
 
     def get_scenario(self, scenario_id: str) -> Optional[dict]:
@@ -879,6 +880,11 @@ class StateDatabase:
             else:
                 rows = conn.cursor().execute("SELECT * FROM chat_sessions ORDER BY updated_at DESC").fetchall()
             return [dict(r) for r in rows]
+
+    def get_chat_session(self, chat_id: str) -> Optional[dict]:
+        with self._get_connection() as conn:
+            row = conn.cursor().execute("SELECT * FROM chat_sessions WHERE chat_id = ?", (chat_id,)).fetchone()
+            return dict(row) if row else None
 
     def get_chat_history(self, chat_id: str) -> List[dict]:
         with self._get_connection() as conn:

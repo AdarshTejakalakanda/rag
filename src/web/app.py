@@ -325,21 +325,26 @@ async def open_file_location(req: OpenFileLocationRequest):
 
     p = Path(raw_path).resolve()
     if not p.exists():
-        p_alt = Path(os.getcwd()) / raw_path
+        p_alt = (Path(os.getcwd()) / raw_path).resolve()
         if p_alt.exists():
-            p = p_alt.resolve()
+            p = p_alt
 
     import platform
     import subprocess
     sys_name = platform.system()
     try:
         if sys_name == "Windows":
-            if p.exists():
-                subprocess.Popen(["explorer.exe", f"/select,{str(p)}"])
+            win_path = str(p).replace("/", "\\")
+            if p.exists() and p.is_file():
+                # Correct Windows Explorer command line to highlight specific file
+                subprocess.Popen(f'explorer.exe /select,"{win_path}"')
+            elif p.exists() and p.is_dir():
+                subprocess.Popen(f'explorer.exe "{win_path}"')
             elif p.parent.exists():
-                subprocess.Popen(["explorer.exe", str(p.parent)])
+                parent_path = str(p.parent).replace("/", "\\")
+                subprocess.Popen(f'explorer.exe "{parent_path}"')
             else:
-                raise HTTPException(status_code=404, detail=f"File path not found: {raw_path}")
+                raise HTTPException(status_code=404, detail=f"File path not found on disk: {raw_path}")
         elif sys_name == "Darwin":
             if p.exists():
                 subprocess.Popen(["open", "-R", str(p)])
@@ -390,8 +395,14 @@ async def clear_repo_cache(repo_id: str):
 @app.get("/api/chat-history/{chat_id}")
 async def get_chat_history(chat_id: str):
     p = get_pipeline()
+    session = p.state_db.get_chat_session(chat_id)
     history = p.state_db.get_chat_history(chat_id)
-    return {"status": "success", "chat_id": chat_id, "messages": history}
+    return {
+        "status": "success",
+        "chat_id": chat_id,
+        "repo_id": session.get("repo_id") if session else "default",
+        "messages": history,
+    }
 
 
 @app.post("/api/chat/stream")
@@ -2212,9 +2223,16 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
     async function selectChatSession(chatId) {
       activeChatId = chatId;
-      loadChatSessions();
       const res = await fetch('/api/chat-history/' + encodeURIComponent(chatId));
       const data = await res.json();
+      if (data.repo_id && data.repo_id !== activeRepoId) {
+        activeRepoId = data.repo_id;
+        const selector = document.getElementById('globalRepoSelector');
+        if (selector) selector.value = data.repo_id;
+        const titleEl = document.getElementById('selectedRepoTitle');
+        if (titleEl) titleEl.textContent = data.repo_id;
+      }
+      loadChatSessions();
       const box = document.getElementById('chatMessages');
       box.innerHTML = '';
 
@@ -2610,7 +2628,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
               const fileName = getFileName(c.file_path);
               const pct = c.match_percentage || 0;
               const pillColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
-              const safePath = escapeHtml(c.file_path || '');
+              const rawPath = c.file_path || '';
               return `
                 <div style="display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; margin-top: 6px;">
                   <span class="citation-pill" title="Click to view verified Gherkin steps" onclick="openScenarioModal('${c.scenario_id}')">
@@ -2619,7 +2637,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
                     <span style="opacity: 0.8">(${fileName}:${c.line_number})</span>
                     <span class="badge" style="background: rgba(255,255,255,0.08); color: ${pillColor}; font-size: 10px; padding: 1px 5px; margin-left: 4px;">${pct}% Coverage</span>
                   </span>
-                  <button class="btn-icon-folder" title="Open feature folder in Explorer (${safePath})" onclick="openFileLocation('${safePath}', event)">
+                  <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open feature folder in Explorer" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
                     <i data-lucide="folder" style="width: 13px; height: 13px;"></i>
                   </button>
                 </div>
@@ -2660,7 +2678,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
               const fileName = getFileName(c.file_path);
               const pct = c.match_percentage || 0;
               const badgeColor = pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)');
-              const safePath = escapeHtml(c.file_path || '');
+              const rawPath = c.file_path || '';
               const itemDiv = document.createElement('div');
               itemDiv.style.display = 'inline-flex';
               itemDiv.style.alignItems = 'center';
@@ -2674,7 +2692,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
                   <span style="opacity: 0.8">(${fileName}:${c.line_number})</span>
                   <span class="badge" style="background: rgba(255,255,255,0.08); color: ${badgeColor}; font-size: 10px; margin-left: 4px;">${pct}% Coverage</span>
                 </span>
-                <button class="btn-icon-folder" title="Open feature folder in Explorer (${safePath})" onclick="openFileLocation('${safePath}', event)">
+                <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open feature folder in Explorer" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
                   <i data-lucide="folder" style="width: 13px; height: 13px;"></i>
                 </button>
               `;
@@ -2706,7 +2724,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         const isCited = c.is_cited && pct > 0;
         const badgeColor = isCited ? (pct >= 70 ? 'var(--green)' : (pct >= 40 ? 'var(--yellow)' : 'var(--accent)')) : '#64748b';
         const badgeLabel = isCited ? `${pct}% Coverage` : '0% (Not Relevant)';
-        const safePath = escapeHtml(c.file_path || '');
+        const rawPath = c.file_path || '';
         card.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
             <div class="title" style="flex: 1;"><i data-lucide="${isCited ? 'file-check-2' : 'file-minus'}" style="width: 14px; height: 14px; color: ${isCited ? 'var(--accent)' : '#64748b'}; flex-shrink: 0;"></i> <span>${escapeHtml(c.scenario_name)}</span></div>
@@ -2715,7 +2733,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           <div class="meta" style="margin-top: 6px;">Feature: ${escapeHtml(c.feature_title || '')}</div>
           <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
             <div class="meta" style="color: var(--accent); margin-top: 0;">${escapeHtml(fileName)} : Line ${c.line_number}</div>
-            <button class="btn-icon-folder" title="Open feature folder in Explorer" style="padding: 2px 7px; font-size: 10.5px;" onclick="openFileLocation('${safePath}', event)">
+            <button class="btn-icon-folder" data-filepath="${escapeHtml(rawPath)}" title="Open feature folder in Explorer" style="padding: 2px 7px; font-size: 10.5px;" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
               <i data-lucide="folder" style="width: 12px; height: 12px;"></i> Open
             </button>
           </div>
@@ -2740,15 +2758,15 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         document.getElementById('modalTitle').innerHTML = `<i data-lucide="file-code" style="width: 18px; height: 18px; color: var(--accent);"></i> <span>${escapeHtml(sc.scenario_name)}</span>`;
         const fileName = getFileName(sc.file_path);
         const featName = sc.feature_name || sc.feature_title || 'Feature';
-        const safePath = escapeHtml(sc.file_path || '');
+        const rawPath = sc.file_path || '';
         document.getElementById('modalMeta').innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
             <div>
               <div><strong>Feature:</strong> ${escapeHtml(featName)}</div>
               <div style="margin-top: 4px;"><strong>Location:</strong> <code style="color: var(--accent);">${escapeHtml(fileName)} (Line ${sc.line_number})</code></div>
-              <div style="margin-top: 4px; font-size: 12px; opacity: 0.8;">${safePath}</div>
+              <div style="margin-top: 4px; font-size: 12px; opacity: 0.8;">${escapeHtml(rawPath)}</div>
             </div>
-            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 11.5px; display: flex; align-items: center; gap: 6px; flex-shrink: 0;" onclick="openFileLocation('${safePath}', event)">
+            <button class="btn btn-secondary" data-filepath="${escapeHtml(rawPath)}" style="padding: 6px 12px; font-size: 11.5px; display: flex; align-items: center; gap: 6px; flex-shrink: 0;" onclick="openFileLocation(this.getAttribute('data-filepath'), event)">
               <i data-lucide="folder-open" style="width: 14px; height: 14px; color: var(--accent);"></i> Reveal in Explorer
             </button>
           </div>
