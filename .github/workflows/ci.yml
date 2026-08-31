@@ -2,7 +2,7 @@ name: CI / Test Suite
 
 on:
   push:
-    branches: [ main, master, "feat/**" ]
+    branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -54,9 +54,6 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
           pip install pytest pytest-cov httpx
-
-      - name: Install Coverage Agent in Editable Mode
-        run: |
           pip install -e .
 
       - name: Run Pytest Test Suite
