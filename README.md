@@ -69,18 +69,36 @@ flowchart TD
 ## 🚀 Quickstart
 
 ### 1. Setup Virtual Environment
+
+**On macOS / Linux:**
 ```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+```
+
+**On Windows (PowerShell):**
+```powershell
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
+pip install -e .
 ```
 
 ### 2. Configure LLM API Keys (Optional)
-```bash
-# For Google Gemini:
-$env:GEMINI_API_KEY="your-gemini-key"
 
-# Or for OpenAI:
+**On macOS / Linux:**
+```bash
+export GEMINI_API_KEY="your-gemini-key"
+# or
+export OPENAI_API_KEY="your-openai-key"
+```
+
+**On Windows (PowerShell):**
+```powershell
+$env:GEMINI_API_KEY="your-gemini-key"
+# or
 $env:OPENAI_API_KEY="your-openai-key"
 ```
 *(If no API key is provided, the system seamlessly uses the local heuristic judge for offline testing.)*
@@ -118,12 +136,26 @@ python src/cli.py watch --features sample_data/feature_repos
 
 ## 🧪 Running Tests
 
+**On macOS / Linux:**
 ```bash
-.\venv\Scripts\python.exe -m pytest -v
+pytest tests/ -v
 ```
 
+**On Windows:**
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/ -v
+```
 
-TO LAUNCH THE INTERACTIVE WEB UI 
+---
+
+## 🌐 Launch the Interactive Web Dashboard
+
+Once installed, run:
 ```bash
 coverage-agent serve --port 8000
 ```
+or
+```bash
+uvicorn src.web.app:app --host 0.0.0.0 --port 8000 --reload
+```
+Then open your browser to **`http://localhost:8000`**.

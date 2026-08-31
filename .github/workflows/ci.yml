@@ -2,7 +2,7 @@ name: CI / Test Suite
 
 on:
   push:
-    branches: [ main, master, "feat/**" ]
+    branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Pytest & Benchmarks (${{ matrix.os }}, Python ${{ matrix.python-version }})
@@ -18,13 +21,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.11"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10"]
 
     env:
-      HF_HOME: ${{ runner.os == 'Windows' && 'C:\\Users\\runneradmin\\.cache\\huggingface' || '/home/runner/.cache/huggingface' }}
-      TORCH_HOME: ${{ runner.os == 'Windows' && 'C:\\Users\\runneradmin\\.cache\\torch' || '/home/runner/.cache/torch' }}
-      SENTENCE_TRANSFORMERS_HOME: ${{ runner.os == 'Windows' && 'C:\\Users\\runneradmin\\.cache\\sentence_transformers' || '/home/runner/.cache/sentence_transformers' }}
       PYTHONPATH: .
 
     steps:
@@ -45,9 +45,6 @@ jobs:
             ~/.cache/huggingface
             ~/.cache/torch
             ~/.cache/sentence_transformers
-            C:\Users\runneradmin\.cache\huggingface
-            C:\Users\runneradmin\.cache\torch
-            C:\Users\runneradmin\.cache\sentence_transformers
           key: ml-models-${{ runner.os }}-${{ hashFiles('configs/config.yaml') }}
           restore-keys: |
             ml-models-${{ runner.os }}-
@@ -57,9 +54,6 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
           pip install pytest pytest-cov httpx
-
-      - name: Install Coverage Agent in Editable Mode
-        run: |
           pip install -e .
 
       - name: Run Pytest Test Suite
