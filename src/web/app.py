@@ -548,47 +548,47 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     [data-theme="light"] {
-      --bg: #f9f9fb;
-      --sidebar-bg: #f3f3f6;
+      --bg: #ffffff;
+      --sidebar-bg: #f8f9fa;
       --card-bg: #ffffff;
-      --card-hover: #f7f7fa;
-      --card-border: #e2e2e8;
-      --card-border-subtle: #eaeaea;
-      --feed-bg: #f4f4f7;
+      --card-hover: #f1f5f9;
+      --card-border: #e2e8f0;
+      --card-border-subtle: #f1f5f9;
+      --feed-bg: #f8fafc;
       --feed-entry-bg: #ffffff;
-      --accent: #111111;
-      --accent-glow: rgba(0, 0, 0, 0.06);
-      --purple: #4b5563;
-      --purple-glow: rgba(0, 0, 0, 0.04);
-      --text: #18181b;
-      --text-muted: #71717a;
-      --text-subtle: #a1a1aa;
+      --accent: #0f172a;
+      --accent-glow: rgba(15, 23, 42, 0.08);
+      --purple: #334155;
+      --purple-glow: rgba(15, 23, 42, 0.04);
+      --text: #0f172a;
+      --text-muted: #475569;
+      --text-subtle: #64748b;
       --input-bg: #ffffff;
-      --input-border: #d4d4d8;
-      --btn-primary-bg: #18181b;
+      --input-border: #cbd5e1;
+      --btn-primary-bg: #0f172a;
       --btn-primary-text: #ffffff;
-      --btn-primary-hover: #000000;
-      --btn-secondary-bg: #f4f4f5;
-      --btn-secondary-text: #18181b;
-      --btn-secondary-border: #d4d4d8;
-      --btn-secondary-hover: #e4e4e7;
-      --user-bubble-bg: #f4f4f5;
-      --user-bubble-border: #e4e4e7;
-      --user-bubble-text: #18181b;
+      --btn-primary-hover: #1e293b;
+      --btn-secondary-bg: #f1f5f9;
+      --btn-secondary-text: #0f172a;
+      --btn-secondary-border: #cbd5e1;
+      --btn-secondary-hover: #e2e8f0;
+      --user-bubble-bg: #f1f5f9;
+      --user-bubble-border: #e2e8f0;
+      --user-bubble-text: #0f172a;
       --assistant-bubble-bg: #ffffff;
-      --assistant-bubble-border: #e2e2e8;
-      --code-bg: #f4f4f5;
-      --code-border: #e4e4e7;
-      --code-text: #18181b;
+      --assistant-bubble-border: #e2e8f0;
+      --code-bg: #f8fafc;
+      --code-border: #e2e8f0;
+      --code-text: #0f172a;
       --modal-bg: #ffffff;
-      --modal-border: #d4d4d8;
+      --modal-border: #cbd5e1;
       --toast-bg: #ffffff;
-      --toast-border: #e2e2e8;
-      --scrollbar-thumb: #d4d4d8;
-      --scrollbar-track: #f9f9fb;
-      --green: #059669;
-      --yellow: #d97706;
-      --red: #dc2626;
+      --toast-border: #cbd5e1;
+      --scrollbar-thumb: #cbd5e1;
+      --scrollbar-track: #f8fafc;
+      --green: #15803d;
+      --yellow: #b45309;
+      --red: #b91c1c;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -763,8 +763,8 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       gap: 8px;
       transition: all 0.2s;
     }
-    .tab-btn:hover { color: #fff; }
-    .tab-btn.active { color: #fff; border-bottom-color: #fff; }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--text); }
 
     /* Main Area */
     main {
@@ -1615,14 +1615,14 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
   <!-- Custom Confirmation Dialog Modal -->
   <div id="customConfirmModal" class="modal" onclick="if(event.target===this) closeConfirmDialog(false)">
-    <div class="modal-content" style="max-width: 420px; padding: 20px; border-radius: 12px; background: #1e1e1e; border: 1px solid #333;">
+    <div class="modal-content" style="max-width: 420px; padding: 20px; border-radius: 12px; background: var(--modal-bg); border: 1px solid var(--modal-border);">
       <div style="display: flex; align-items: flex-start; gap: 12px;">
-        <div id="confirmIconBox" style="width: 36px; height: 36px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); color: #f87171; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+        <div id="confirmIconBox" style="width: 36px; height: 36px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); color: var(--red); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
           <i id="confirmIcon" data-lucide="alert-triangle" style="width: 18px; height: 18px;"></i>
         </div>
         <div style="flex: 1;">
-          <h3 id="confirmTitle" style="font-size: 14.5px; font-weight: 600; color: #fff; margin-bottom: 5px;">Confirm Action</h3>
-          <p id="confirmMessage" style="font-size: 12.5px; color: #a1a1aa; line-height: 1.5;">Are you sure you want to proceed?</p>
+          <h3 id="confirmTitle" style="font-size: 14.5px; font-weight: 600; color: var(--text); margin-bottom: 5px;">Confirm Action</h3>
+          <p id="confirmMessage" style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5;">Are you sure you want to proceed?</p>
         </div>
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px;">
@@ -1754,7 +1754,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Left: Chat Sessions Sidebar -->
         <div class="sessions-col">
           <div class="sessions-header">
-            <h3 style="font-size: 14px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px;">
+            <h3 style="font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 6px;">
               <i data-lucide="messages-square" style="width: 15px; height: 15px; color: var(--accent);"></i> Chat Sessions
             </h3>
             <div style="display: flex; gap: 4px;">
@@ -1768,13 +1768,13 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Center: Chat Window -->
         <div class="chat-window">
           <!-- Live Indexing Banner -->
-          <div id="indexingBanner" style="display: none; background: rgba(234, 179, 8, 0.12); border-bottom: 1px solid rgba(234, 179, 8, 0.3); padding: 10px 20px; font-size: 13px; color: #fde047; align-items: center; justify-content: space-between; flex-shrink: 0;">
+          <div id="indexingBanner" style="display: none; background: rgba(234, 179, 8, 0.12); border-bottom: 1px solid rgba(234, 179, 8, 0.3); padding: 10px 20px; font-size: 13px; color: var(--yellow); align-items: center; justify-content: space-between; flex-shrink: 0;">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <i data-lucide="loader-2" class="spin-icon" style="width: 15px; height: 15px; color: #fde047;"></i>
+              <i data-lucide="loader-2" class="spin-icon" style="width: 15px; height: 15px; color: var(--yellow);"></i>
               <span id="indexingBannerText">Indexing in progress... Analysis will be available as soon as indexing completes.</span>
             </div>
-            <div style="width: 140px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
-              <div id="indexingProgressBar" style="width: 50%; height: 100%; background: #fde047; transition: width 0.3s;"></div>
+            <div style="width: 140px; height: 6px; background: rgba(0,0,0,0.1); border-radius: 3px; overflow: hidden;">
+              <div id="indexingProgressBar" style="width: 50%; height: 100%; background: var(--yellow); transition: width 0.3s;"></div>
             </div>
           </div>
 
@@ -1796,7 +1796,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 
         <!-- Right: Scenario Citations Sidebar -->
         <div class="citations-col">
-          <h3 style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+          <h3 style="font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
             <i data-lucide="book-open" style="width: 15px; height: 15px; color: var(--accent);"></i> Scenario Citations
           </h3>
           <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Retrieved grounded Gherkin scenarios for the latest query.</p>
@@ -1812,7 +1812,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <div id="scenarioModal" class="modal" onclick="if(event.target===this) closeScenarioModal()">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 id="modalTitle" style="font-size: 16px; color: #fff; display: flex; align-items: center; gap: 8px;">
+        <h3 id="modalTitle" style="font-size: 16px; color: var(--text); display: flex; align-items: center; gap: 8px;">
           <i data-lucide="file-code" style="width: 18px; height: 18px; color: var(--accent);"></i> Scenario Details
         </h3>
         <button class="modal-close" aria-label="Close scenario details" onclick="closeScenarioModal()"><i data-lucide="x" style="width: 18px; height: 18px;"></i></button>
@@ -1829,7 +1829,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <div style="display: flex; align-items: center; gap: 10px;">
           <i data-lucide="clipboard-check" style="width: 22px; height: 22px; color: var(--accent);"></i>
           <div>
-            <h3 id="reportModalTitle" style="font-size: 16px; color: #fff;">Coverage Assessment & Gap Analysis</h3>
+            <h3 id="reportModalTitle" style="font-size: 16px; color: var(--text);">Coverage Assessment & Gap Analysis</h3>
             <div id="reportModalSubtitle" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;"></div>
           </div>
         </div>
@@ -1838,7 +1838,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
           <button class="modal-close" aria-label="Close report" onclick="closeReportModal()"><i data-lucide="x" style="width: 18px; height: 18px;"></i></button>
         </div>
       </div>
-      <div id="reportModalBody" style="margin-top: 16px; max-height: 70vh; overflow-y: auto; line-height: 1.7; font-size: 13.5px; color: #e2e8f0;"></div>
+      <div id="reportModalBody" style="margin-top: 16px; max-height: 70vh; overflow-y: auto; line-height: 1.7; font-size: 13.5px; color: var(--text);"></div>
     </div>
   </div>
 
@@ -2444,7 +2444,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
             <span class="live-agent-badge"><i data-lucide="sparkles" style="width: 12px; height: 12px;"></i> Live Agentic Execution</span>
             <span id="liveStatusShimmer" class="shimmer-text" style="font-size: 12px; font-weight: 600;">Initializing verification pipeline...</span>
           </div>
-          <span id="liveElapsedTimer" style="font-size: 11px; color: #64748b; font-family: 'Fira Code', monospace;">0.0s</span>
+          <span id="liveElapsedTimer" style="font-size: 11px; color: var(--text-muted); font-family: 'Fira Code', monospace;">0.0s</span>
         </div>
         <div class="live-step-list" id="liveStepList"></div>
       `;
@@ -2576,13 +2576,13 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
               <i data-lucide="sparkles" class="thought-sparkle" style="width: 14px; height: 14px;"></i>
               <span>Thought for ${durationSec}s</span>
               <span style="opacity: 0.4">•</span>
-              <span style="color: #94a3b8; font-size: 11.5px;">${callsLabel}</span>
+              <span style="color: var(--text-muted); font-size: 11.5px;">${callsLabel}</span>
               ${statusBadge}
             </div>
             <i data-lucide="chevron-down" class="thought-chevron" style="width: 14px; height: 14px;"></i>
           </button>
           <div class="thought-drawer">
-            <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Agent Execution Trace & Verification Loop</div>
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Agent Execution Trace & Verification Loop</div>
             <div class="thought-timeline">
               ${timelineHtml}
             </div>
@@ -2886,7 +2886,7 @@ HTML_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
               <i data-lucide="folder-open" style="width: 14px; height: 14px; color: var(--accent);"></i> Reveal in Explorer
             </button>
           </div>
-          ${sc.tags && sc.tags.length ? `<div style="margin-top: 8px;">${sc.tags.map(t => `<span class="badge" style="background: rgba(255,255,255,0.06); border: 1px solid #383838; color: #ececec; font-size: 11px; margin-right: 4px;">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+          ${sc.tags && sc.tags.length ? `<div style="margin-top: 8px;">${sc.tags.map(t => `<span class="badge" style="background: var(--card-hover); border: 1px solid var(--card-border); color: var(--text); font-size: 11px; margin-right: 4px;">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
         `;
         document.getElementById('modalGherkin').textContent = sc.raw_gherkin || sc.canonical_text;
         document.getElementById('scenarioModal').classList.add('show');
